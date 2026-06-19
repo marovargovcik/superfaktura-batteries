@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+# Blocks commits containing unformatted Scala. Checks staged *.scala files with scalafmt.
+# Enable once per clone: git config core.hooksPath .githooks
+set -eu
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.scala' || true)
+[ -z "$staged" ] && exit 0
+
+if command -v scalafmt >/dev/null 2>&1; then
+  printf '%s\n' "$staged" | xargs scalafmt --test
+else
+  echo "scalafmt CLI not found; falling back to sbt (slower). Install: cs install scalafmt"
+  sbt scalafmtCheckAll
+fi
