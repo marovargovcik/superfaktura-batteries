@@ -123,7 +123,8 @@ object SuperfakturaClient:
       amount <- expense.get[BigDecimal]("amount").leftMap(_.getMessage)
       currency <- expense.get[String]("currency").leftMap(_.getMessage)
       rawDate <- expense.get[String]("created").leftMap(_.getMessage)
-      created <- Try(LocalDate.parse(rawDate)).toEither.leftMap(_ => s"invalid created date: '$rawDate'")
+      // Superfaktura returns `created` as a datetime ("YYYY-MM-DD HH:MM:SS"); we keep only the date.
+      created <- Try(LocalDate.parse(rawDate.take(10))).toEither.leftMap(_ => s"invalid created date: '$rawDate'")
       comment <- expense.get[Option[String]]("comment").leftMap(_.getMessage)
     yield Expense(ExpenseId(id), name, Money(amount, currency), created, comment)
 

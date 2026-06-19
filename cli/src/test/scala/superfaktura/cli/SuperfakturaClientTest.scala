@@ -156,9 +156,9 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
   }
 
   "listExpenses" - {
-    "decodes expenses from a single page" in {
+    "decodes expenses from a single page, taking the date from Superfaktura's datetime field" in {
       val body =
-        """{"pageCount":1,"items":[{"Expense":{"id":7,"name":"SHELL","amount":73.71,"currency":"EUR","created":"2026-06-16"}}]}"""
+        """{"pageCount":1,"items":[{"Expense":{"id":7,"name":"SHELL","amount":73.71,"currency":"EUR","created":"2026-06-16 00:00:00"}}]}"""
       algebra(respond(body)).listExpenses(window).unsafeRunSync() shouldBe
         List(Expense(ExpenseId(7), "SHELL", Money(BigDecimal("73.71"), "EUR"), LocalDate.of(2026, 6, 16), None))
     }

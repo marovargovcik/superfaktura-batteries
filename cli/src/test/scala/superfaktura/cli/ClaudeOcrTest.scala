@@ -99,6 +99,15 @@ class ClaudeOcrTest extends AnyFreeSpec with Matchers:
         case other => fail(s"expected CliError.ConfigInvalid, got: $other")
     }
 
+    "raises CliError.ConfigInvalid when the API key is empty, without calling the API" in {
+      given ClaudeConfig =
+        ClaudeConfig(apiUrl = "https://api.anthropic.com", apiKey = Secret(""), model = "m", maxTokens = 256)
+      given Client[IO] = clientOf(HttpApp[IO](_ => IO.raiseError(new AssertionError("must not call the API"))))
+      ClaudeOcr.live[IO].read(bytes, ReceiptMedia.Jpeg).attempt.unsafeRunSync() match
+        case Left(_: CliError.ConfigInvalid) => succeed
+        case other => fail(s"expected CliError.ConfigInvalid, got: $other")
+    }
+
     "posts a base64 image block and forces the record_receipt tool" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
       algebra(capturing(captured, toolUse("""{"amount":1.0,"currency":"EUR","date":"2026-06-13"}""")))
