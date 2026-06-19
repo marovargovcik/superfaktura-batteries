@@ -9,7 +9,6 @@ case class Transaction(
     counterpartyIban: Option[String],
     variableSymbol: Option[String],
     specificSymbol: Option[String],
-    constantSymbol: Option[String],
     recipientInfo: Option[String],
     description: String
 )

@@ -7,28 +7,27 @@ import scala.util.Try
 object TatraBankaCsv:
 
   // Column headers as they appear in the Windows-1250-decoded Tatra banka export.
-  private val ProcessedOn    = "Dátum spracovania"
-  private val Amount         = "Suma"
-  private val Currency       = "Mena"
-  private val Type           = "Typ"
-  private val Iban           = "IBAN"
+  private val ProcessedOn = "Dátum spracovania"
+  private val Amount = "Suma"
+  private val Currency = "Mena"
+  private val Type = "Typ"
+  private val Iban = "IBAN"
   private val VariableSymbol = "Variabilný symbol"
   private val SpecificSymbol = "Špecifický symbol"
-  private val ConstantSymbol = "Konštantný symbol"
-  private val RecipientInfo  = "Informácia pre príjemcu"
-  private val Description    = "Popis"
+  private val RecipientInfo = "Informácia pre príjemcu"
+  private val Description = "Popis"
 
   private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
   def parseRow(row: Map[String, String]): Either[String, Transaction] =
     for
-      rawDate     <- field(row, ProcessedOn)
-      date        <- parseDate(rawDate)
-      rawAmount   <- field(row, Amount)
-      amount      <- parseAmount(rawAmount)
-      rawType     <- field(row, Type)
-      direction   <- parseDirection(rawType)
-      currency    <- field(row, Currency)
+      rawDate <- field(row, ProcessedOn)
+      date <- parseDate(rawDate)
+      rawAmount <- field(row, Amount)
+      amount <- parseAmount(rawAmount)
+      rawType <- field(row, Type)
+      direction <- parseDirection(rawType)
+      currency <- field(row, Currency)
     yield Transaction(
       date = date,
       amount = Money(amount, currency),
@@ -36,7 +35,6 @@ object TatraBankaCsv:
       counterpartyIban = optional(row, Iban),
       variableSymbol = optional(row, VariableSymbol),
       specificSymbol = optional(row, SpecificSymbol),
-      constantSymbol = optional(row, ConstantSymbol),
       recipientInfo = optional(row, RecipientInfo),
       description = row.getOrElse(Description, "")
     )
@@ -55,6 +53,7 @@ object TatraBankaCsv:
 
   private def parseDirection(raw: String): Either[String, TransactionType] =
     raw.trim match
-      case "Debet"  => Right(TransactionType.Debit)
+      case "Debet" => Right(TransactionType.Debit)
       case "Kredit" => Right(TransactionType.Credit)
-      case other    => Left(s"unknown transaction type: '$other'")
+      case other => Left(s"unknown transaction type: '$other'")
+end TatraBankaCsv

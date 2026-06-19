@@ -1,5 +1,8 @@
 package superfaktura
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
 object ExpensePlanner:
 
   def toCandidates(transactions: List[Transaction]): List[CandidateExpense] =
@@ -17,23 +20,31 @@ object ExpensePlanner:
       .orElse(transaction.recipientInfo)
       .getOrElse(transaction.description)
 
-  // Card-payment recipient info is "<masked-PAN> <city> <cardholder> <yyyymmdd> <hh:mm:ss> <amount><CCY> <merchant>";
-  // the merchant (e.g. "SHELL 8203", "CLAUDE.AI SUBSCRIPTION") is whatever follows the amount+currency token.
+  // Tatra banka packs card-payment recipient info as
+  // "<masked-PAN> <city> <cardholder> <yyyymmdd> <hh:mm:ss> <amount><CCY> <merchant>".
   private val merchantAfterAmount = """\d+\.\d{2}[A-Z]{3}\s+(.+)$""".r
 
   private def cardMerchant(transaction: Transaction): Option[String] =
-    transaction.recipientInfo.flatMap(info => merchantAfterAmount.findFirstMatchIn(info).map(_.group(1).trim))
+    Option
+      .when(isCardPayment(transaction))(transaction.recipientInfo)
+      .flatten
+      .flatMap(info => merchantAfterAmount.findFirstMatchIn(info).map(_.group(1).trim))
+
+  private def isCardPayment(transaction: Transaction): Boolean =
+    transaction.description.startsWith("GP NÁKUP POS") || transaction.description.startsWith("INT NÁKUP POS")
 
   private def externalRef(transaction: Transaction): ExternalRef =
-    ExternalRef(
-      List(
-        transaction.date,
-        transaction.amount.amount,
-        transaction.amount.currency,
-        transaction.variableSymbol.getOrElse(""),
-        transaction.specificSymbol.getOrElse(""),
-        transaction.counterpartyIban.getOrElse(""),
-        transaction.description
-      ).mkString("|")
+    val fields = List(
+      transaction.date.toString,
+      transaction.amount.amount.toString,
+      transaction.amount.currency,
+      transaction.variableSymbol.getOrElse(""),
+      transaction.specificSymbol.getOrElse(""),
+      transaction.counterpartyIban.getOrElse(""),
+      transaction.description
     )
+    // length-prefix each field so the joined form is injective regardless of field content, then hash for a stable id
+    val canonical = fields.map(field => s"${field.length}:$field").mkString
+    val digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8))
+    ExternalRef(digest.map(byte => f"${byte & 0xff}%02x").mkString)
 end ExpensePlanner

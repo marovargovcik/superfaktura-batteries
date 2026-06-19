@@ -189,8 +189,8 @@ Filters are colon-separated **path segments**, not a query string. For dedup we 
 Parsing rules:
 
 - **Sign:** `Suma` is always positive; direction is in `Typ`. `Debet` → expense candidate; `Kredit` → ignored.
-- **Amount:** strip quotes, comma→dot (`"7850,00"` → `7850.00`). Guard against a thousands separator (not seen in
-  the sample — fail loudly if encountered).
+- **Amount:** strip quotes, drop space thousands separators, comma→dot (`"1 234,56"` → `1234.56`). Any other
+  separator (e.g. a `.` thousands grouping) is rejected as a parse error.
 - **Date:** primary = `Dátum spracovania`. For card payments, prefer the **real purchase timestamp embedded in
   `Informácia pre príjemcu`** when matching receipts.
 - **Vendor / name derivation:**
