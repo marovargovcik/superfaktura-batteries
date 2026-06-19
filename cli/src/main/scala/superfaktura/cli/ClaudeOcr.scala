@@ -19,6 +19,11 @@ object ClaudeOcr:
   given live[F[_]: Concurrent](using client: Client[F], config: ClaudeConfig): OcrAlgebra[F] with
 
     override def read(receipt: ReceiptBytes, media: ReceiptMedia): F[OcrResult] =
+      if config.apiKey.value.isEmpty then
+        Concurrent[F].raiseError(CliError.ConfigInvalid("ANTHROPIC_API_KEY is not set (needed to OCR receipts)"))
+      else readChecked(receipt, media)
+
+    private def readChecked(receipt: ReceiptBytes, media: ReceiptMedia): F[OcrResult] =
       messagesUri.flatMap: uri =>
         val request = Request[F](Method.POST, uri)
           .putHeaders(
