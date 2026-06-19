@@ -8,6 +8,7 @@ enum PlanAction:
   case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef)
   case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
+  case FlagReceipt(receipt: ReceiptRef, reason: String)
 
 object PlanAction:
   private given Configuration = Configuration.default.withDiscriminator("type")

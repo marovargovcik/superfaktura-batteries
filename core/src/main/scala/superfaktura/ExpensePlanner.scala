@@ -22,19 +22,50 @@ object ExpensePlanner:
         case None => Right(candidate)
     Triage(toCreate, duplicates)
 
-  def buildPlan(triage: Triage): Plan =
+  def buildPlan(triage: Triage): Plan = buildPlan(triage, MatchResult.empty, Nil)
+
+  def buildPlan(triage: Triage, matched: MatchResult, unreadableReceipts: List[ReceiptRef]): Plan =
+    val attachByCandidate = matched.paired.collect {
+      case Pairing(receipt, MatchTarget.Candidate(candidate)) => candidate.externalRef -> receipt.ref
+    }.toMap
     val creates = triage.toCreate.map: candidate =>
-      PlanItem(PlanAction.CreateExpense(candidate.externalRef, candidate, None), PlanItemStatus.Pending)
+      PlanItem(
+        PlanAction.CreateExpense(candidate.externalRef, candidate, attachByCandidate.get(candidate.externalRef)),
+        PlanItemStatus.Pending
+      )
+    val attaches = matched.paired.collect:
+      case Pairing(receipt, MatchTarget.Existing(expense)) =>
+        PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref), PlanItemStatus.Pending)
     val skips = triage.duplicates.map: duplicate =>
       PlanItem(
         PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
         PlanItemStatus.Skipped
       )
-    Plan(creates ++ skips)
+    Plan(creates ++ attaches ++ skips ++ receiptFlags(matched, unreadableReceipts))
+
+  private def receiptFlags(matched: MatchResult, unreadableReceipts: List[ReceiptRef]): List[PlanItem] =
+    val unmatched =
+      matched.unmatchedReceipts.map(receipt => receipt.ref -> "no transaction matches its amount and date")
+    val ambiguous = matched.ambiguousReceipts.map: entry =>
+      entry.receipt.ref -> s"matches ${entry.targets.size} transactions; resolve manually"
+    val contested = matched.contestedTargets
+      .flatMap(_.receipts)
+      .map(receipt => receipt.ref -> "several receipts match the same transaction")
+    val unreadable = unreadableReceipts.map(ref => ref -> "could not read the amount and date")
+    (unmatched ++ ambiguous ++ contested ++ unreadable).distinctBy { case (ref, _) => ref }.map { case (ref, reason) =>
+      PlanItem(PlanAction.FlagReceipt(ref, reason), PlanItemStatus.Skipped)
+    }
 
   def windowOf(candidates: List[CandidateExpense]): DateWindow =
     val dates = candidates.map(_.occurredOn)
     DateWindow(dates.minBy(_.toEpochDay), dates.maxBy(_.toEpochDay))
+
+  def listingWindow(receipts: List[Receipt], window: MatchWindow): DateWindow =
+    val dates = receipts.map(_.date)
+    DateWindow(
+      dates.minBy(_.toEpochDay).minusDays(window.daysBefore),
+      dates.maxBy(_.toEpochDay).plusDays(window.daysAfter)
+    )
 
   // Superfaktura has no custom-metadata field, so the human-visible comment is the only place
   // to persist a machine-readable ref for de-duplicating on re-runs.
@@ -68,6 +99,8 @@ object ExpensePlanner:
         s"[$status] skip duplicate of expense ${matched.value}: $reason"
       case PlanAction.NeedsResolution(_, candidates, reason) =>
         s"[$status] needs resolution ($reason); candidates: ${candidates.map(_.value).mkString(", ")}"
+      case PlanAction.FlagReceipt(receipt, reason) =>
+        s"[$status] flag receipt ${receipt.path}: $reason"
 
   private def expenseName(transaction: Transaction): String =
     cardMerchant(transaction)
