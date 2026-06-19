@@ -500,6 +500,10 @@ Two sbt subprojects in `build.sbt`:
   (`CommandIOApp`); depends on `core`, and on `core % "test->test"` to reuse the stubs.
 - Tests mirror packages under each subproject's `src/test/scala` root with a `Test` suffix.
 
+**File placement:** one public type per file (named after the type), even tiny ones. Files are **not** grouped into
+technical-kind folders (no `domain/`, no `algebra/`) — `core` keeps domain types, algebras/stores and pure functions
+side by side in one package; the only structural split is by layer/subproject (`core` vs `cli`).
+
 ### Tooling: formatting & linting
 
 Both are enforced — a clean checkout fails CI on any deviation, so the style guide is mechanical, not aspirational.

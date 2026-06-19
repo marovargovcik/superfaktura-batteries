@@ -113,6 +113,7 @@
 - **External HTTP calls must retry transient failures** (5xx, connection reset/refused, timeouts) with exponential backoff. Apply the http4s `Retry` client middleware once at the client layer rather than hand-rolling retries per call.
 - **Permission/auth checks must execute before any database operation (read or write).** Database reads are only allowed before the check if they are required to perform the check itself.
 - Loading of configuration (e.g. `application.conf`) should only be done at application entry points.
+- **File placement: one public type per file**, named after the type, even when small. Do **not** group files into technical-kind folders (no `domain/`, no `algebra/`, no `models/`) — keep domain types, algebras/stores and pure functions side by side. The only structural split is by layer/subproject (e.g. `core` vs `cli`).
 
 ## Scala — Code Style
 
