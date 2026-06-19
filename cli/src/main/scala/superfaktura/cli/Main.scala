@@ -10,10 +10,14 @@ import org.http4s.ember.client.EmberClientBuilder
 import pureconfig.ConfigSource
 import superfaktura.{
   ApplyProgram,
+  Attachment,
   BankStatementSourceAlgebra,
   CliError,
+  ImagePrepAlgebra,
+  OcrAlgebra,
   PlanProgram,
   PlanStore,
+  ReceiptSourceAlgebra,
   ReporterAlgebra,
   SuperfakturaAlgebra
 }
@@ -33,8 +37,10 @@ object Main
       .withDefault(Paths.get("plan.json"))
 
   private val planCommand: Opts[IO[ExitCode]] =
-    Opts.subcommand("plan", "Analyse the CSV and write a reviewable plan (no changes are made).") {
-      (Opts.option[Path]("csv", "Bank statement CSV (Tatra banka export)."), planPath).mapN(runPlan)
+    Opts.subcommand("plan", "Analyse the inputs and write a reviewable plan (no changes are made).") {
+      val csv = Opts.option[Path]("csv", "Bank statement CSV (Tatra banka export).").orNone
+      val receipts = Opts.option[Path]("receipts", "Folder of receipt/invoice files to pair and attach.").orNone
+      (csv, receipts, planPath).mapN(runPlan)
     }
 
   private val applyCommand: Opts[IO[ExitCode]] =
@@ -42,22 +48,35 @@ object Main
 
   override def main: Opts[IO[ExitCode]] = planCommand orElse applyCommand
 
-  private def runPlan(csv: Path, plan: Path): IO[ExitCode] =
-    environment(plan)(PlanProgram.run[IO](csv)).as(ExitCode.Success)
+  private def runPlan(csv: Option[Path], receipts: Option[Path], plan: Path): IO[ExitCode] =
+    if csv.isEmpty && receipts.isEmpty then IO.println("Provide --csv and/or --receipts.").as(ExitCode.Error)
+    else environment(plan)(PlanProgram.run[IO](csv, receipts)).as(ExitCode.Success)
 
   private def runApply(plan: Path): IO[ExitCode] =
     environment(plan)(ApplyProgram.run[IO]).as(ExitCode.Success)
 
   private def environment[A](plan: Path)(
-      program: (BankStatementSourceAlgebra[IO], SuperfakturaAlgebra[IO], PlanStore[IO], ReporterAlgebra[IO]) ?=> IO[A]
+      program: (
+          BankStatementSourceAlgebra[IO],
+          SuperfakturaAlgebra[IO],
+          ReceiptSourceAlgebra[IO],
+          OcrAlgebra[IO],
+          ImagePrepAlgebra[IO],
+          PlanStore[IO],
+          ReporterAlgebra[IO]
+      ) ?=> IO[A]
   ): IO[A] =
     loadConfig.flatMap: config =>
       EmberClientBuilder.default[IO].build.use: ember =>
         given Client[IO] = Retry(retryPolicy)(ember)
         given SuperfakturaConfig = config.superfaktura
+        given ClaudeConfig = config.claude
         given PlanStore[IO] = FilePlanStore.at[IO](plan)
+        given ImagePrepAlgebra[IO] = ScrimageImagePrep.fitting[IO](Attachment.maxBytes)
         import SuperfakturaClient.given
         import TatraBankaSource.given
+        import FileReceiptSource.given
+        import ClaudeOcr.given
         import ConsoleReporter.given
         program
 
