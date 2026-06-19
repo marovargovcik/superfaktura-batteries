@@ -37,6 +37,7 @@ object ApplyProgram:
             superfaktura.editExpense(expenseId, ExpensePatch(Some(bytes))).as(item.copy(status =
               PlanItemStatus.Applied
             ))
+          // Unlike a create, the receipt is the whole point here, so one that won't fit fails the item.
           case None => item.copy(status = PlanItemStatus.Failed).pure[F]
       case other => other.pure[F]
 
@@ -45,7 +46,7 @@ object ApplyProgram:
       receiptSource: ReceiptSourceAlgebra[F],
       imagePrep: ImagePrepAlgebra[F]
   ): F[Option[ReceiptBytes]] =
-    formatOf(receipt) match
+    AttachmentFormat.of(receipt) match
       case None => Option.empty[ReceiptBytes].pure[F]
       case Some(format) =>
         for
@@ -54,7 +55,4 @@ object ApplyProgram:
         yield prepared match
           case PreparedAttachment.Fitted(fitted) => Some(fitted)
           case PreparedAttachment.TooLarge(_) => None
-
-  private def formatOf(receipt: ReceiptRef): Option[AttachmentFormat] =
-    receipt.path.split("\\.").lastOption.flatMap(AttachmentFormat.fromExtension)
 end ApplyProgram

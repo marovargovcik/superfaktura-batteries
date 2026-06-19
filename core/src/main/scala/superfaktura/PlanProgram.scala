@@ -20,38 +20,50 @@ object PlanProgram:
       candidates = ExpensePlanner.toCandidates(transactions)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (received, unreadable) = scanned
-      plan <- assemble(candidates, received, unreadable)
+      plan <- assemble(csv.isDefined, candidates, received, unreadable)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
 
-  // With a CSV, receipts pair with the new expenses it produces (use cases A/C); with receipts only,
-  // they pair with expenses already in Superfaktura, windowed by the receipt dates (use case D).
+  // A CSV (even one with no debits) means receipts pair with the new expenses it produces (use cases A/C);
+  // receipts alone pair with expenses already in Superfaktura, windowed by the receipt dates (use case D).
   private def assemble[F[_]: MonadThrow](
+      csvProvided: Boolean,
       candidates: List[CandidateExpense],
       received: List[Receipt],
       unreadable: List[ReceiptRef]
-  )(using superfaktura: SuperfakturaAlgebra[F]): F[Plan] =
-    if candidates.nonEmpty then
-      for existing <- superfaktura.listExpenses(ExpensePlanner.windowOf(candidates))
-      yield
-        val triage = ExpensePlanner.triage(candidates, existing)
-        val targets = triage.toCreate.map(MatchTarget.Candidate(_))
-        ExpensePlanner.buildPlan(
-          triage,
-          ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default),
-          unreadable
-        )
-    else if received.nonEmpty then
-      for existing <- superfaktura.listExpenses(ExpensePlanner.listingWindow(received, MatchWindow.default))
-      yield
-        val targets = existing.map(MatchTarget.Existing(_))
-        ExpensePlanner.buildPlan(
-          Triage(Nil, Nil),
-          ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default),
-          unreadable
-        )
+  )(using SuperfakturaAlgebra[F]): F[Plan] =
+    if csvProvided then planForCandidates(candidates, received, unreadable)
+    else if received.nonEmpty then planForExisting(received, unreadable)
     else ExpensePlanner.buildPlan(Triage(Nil, Nil), MatchResult.empty, unreadable).pure[F]
+
+  private def planForCandidates[F[_]: MonadThrow](
+      candidates: List[CandidateExpense],
+      received: List[Receipt],
+      unreadable: List[ReceiptRef]
+  )(using SuperfakturaAlgebra[F]): F[Plan] =
+    existingForDedup(candidates).map: existing =>
+      val triage = ExpensePlanner.triage(candidates, existing)
+      val targets = triage.toCreate.map(MatchTarget.Candidate(_))
+      ExpensePlanner.buildPlan(triage, ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default), unreadable)
+
+  private def existingForDedup[F[_]: MonadThrow](
+      candidates: List[CandidateExpense]
+  )(using superfaktura: SuperfakturaAlgebra[F]): F[List[Expense]] =
+    if candidates.isEmpty then List.empty[Expense].pure[F]
+    else superfaktura.listExpenses(ExpensePlanner.windowOf(candidates))
+
+  private def planForExisting[F[_]: MonadThrow](
+      received: List[Receipt],
+      unreadable: List[ReceiptRef]
+  )(using superfaktura: SuperfakturaAlgebra[F]): F[Plan] =
+    superfaktura.listExpenses(ExpensePlanner.listingWindow(received, MatchWindow.default)).map: existing =>
+      val targets = existing.map(MatchTarget.Existing(_))
+      ExpensePlanner.buildPlan(
+        Triage(Nil, Nil),
+        ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default),
+        unreadable
+      )
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],
@@ -64,7 +76,7 @@ object PlanProgram:
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F]
   ): F[Either[ReceiptRef, Receipt]] =
-    ocrMedia(file.ref) match
+    AttachmentFormat.of(file.ref).flatMap(_.ocrMedia) match
       case None => (Left(file.ref): Either[ReceiptRef, Receipt]).pure[F]
       case Some(media) =>
         for
@@ -73,7 +85,4 @@ object PlanProgram:
         yield (result.amount, result.date) match
           case (Some(amount), Some(date)) => Right(Receipt(file.ref, amount, date))
           case _ => Left(file.ref)
-
-  private def ocrMedia(ref: ReceiptRef): Option[ReceiptMedia] =
-    ref.path.split("\\.").lastOption.flatMap(AttachmentFormat.fromExtension).flatMap(_.ocrMedia)
 end PlanProgram
