@@ -1,13 +1,8 @@
 package superfaktura
 
-// The receipt/invoice formats Superfaktura accepts as attachments. Only raster images can be
-// downscaled to fit the size cap; PDFs and HEICs that are too large are flagged instead.
+// The receipt/invoice formats Superfaktura accepts as attachments.
 enum AttachmentFormat:
   case Jpeg, Png, Pdf, Heic
-
-  def downscalable: Boolean = this match
-    case Jpeg | Png => true
-    case Pdf | Heic => false
 
   // The OCR model reads a narrower set than Superfaktura stores — HEIC has no OCR projection.
   def ocrMedia: Option[ReceiptMedia] = this match

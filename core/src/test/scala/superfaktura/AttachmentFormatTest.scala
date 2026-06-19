@@ -14,17 +14,16 @@ class AttachmentFormatTest extends AnyFreeSpec with Matchers:
     AttachmentFormat.fromExtension("txt") shouldBe None
   }
 
-  "downscalable is true only for raster images" in {
-    AttachmentFormat.Jpeg.downscalable shouldBe true
-    AttachmentFormat.Png.downscalable shouldBe true
-    AttachmentFormat.Pdf.downscalable shouldBe false
-    AttachmentFormat.Heic.downscalable shouldBe false
-  }
-
   "ocrMedia projects to the OCR subset, with HEIC having none" in {
     AttachmentFormat.Jpeg.ocrMedia shouldBe Some(ReceiptMedia.Jpeg)
     AttachmentFormat.Png.ocrMedia shouldBe Some(ReceiptMedia.Png)
     AttachmentFormat.Pdf.ocrMedia shouldBe Some(ReceiptMedia.Pdf)
     AttachmentFormat.Heic.ocrMedia shouldBe None
+  }
+
+  "ReceiptMedia carries the wire mime types sent to the vision model" in {
+    ReceiptMedia.Jpeg.mimeType shouldBe "image/jpeg"
+    ReceiptMedia.Png.mimeType shouldBe "image/png"
+    ReceiptMedia.Pdf.mimeType shouldBe "application/pdf"
   }
 end AttachmentFormatTest
