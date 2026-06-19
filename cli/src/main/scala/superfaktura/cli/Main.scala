@@ -34,7 +34,11 @@ object Main
   override def main: Opts[IO[ExitCode]] = planCommand orElse applyCommand
 
   private def loadConfig: IO[AppConfig] =
-    IO.fromEither(ConfigSource.default.load[AppConfig].leftMap(failures => CliError.ConfigInvalid(failures.toString)))
+    IO.fromEither(
+      ConfigSource.default
+        .load[AppConfig]
+        .leftMap(failures => CliError.ConfigInvalid(failures.toList.map(_.description).mkString("; ")))
+    )
 
   private def runPlan(csv: Option[Path], receipts: Option[Path]): IO[ExitCode] =
     loadConfig
