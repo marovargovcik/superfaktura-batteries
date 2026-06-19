@@ -19,6 +19,7 @@ val fs2V = "3.13.0"
 val fs2DataV = "1.14.0"
 val declineV = "2.6.2"
 val pureconfigV = "0.17.10"
+val scrimageV = "4.3.2"
 val scalatestV = "3.2.20"
 
 lazy val core = (project in file("core"))
@@ -50,6 +51,7 @@ lazy val cli = (project in file("cli"))
       "com.monovore" %% "decline-effect" % declineV,
       "com.github.pureconfig" %% "pureconfig-core" % pureconfigV,
       "com.github.pureconfig" %% "pureconfig-generic-scala3" % pureconfigV,
+      "com.sksamuel.scrimage" % "scrimage-core" % scrimageV,
       "org.scalatest" %% "scalatest" % scalatestV % Test
     )
   )
