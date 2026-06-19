@@ -11,24 +11,41 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 
   private val date = LocalDate.of(2026, 6, 19)
 
+  private def debit(amount: String, variableSymbol: Option[String], description: String): Transaction =
+    Transaction(
+      date = date,
+      amount = Money(BigDecimal(amount), currency = "EUR"),
+      direction = TransactionType.Debit,
+      variableSymbol = variableSymbol,
+      description = description
+    )
+
   "toCandidates" - {
-    "keeps only debits and maps them to candidates" in {
-      val debit = Transaction(date, Money(BigDecimal("45.45"), "EUR"), TransactionType.Debit, Some("123"), "ORANGE")
-      val credit = Transaction(date, Money(BigDecimal("100.00"), "EUR"), TransactionType.Credit, None, "INV 2026005")
+    "keeps debits in input order, drops credits, and maps each to a full candidate" in {
+      val orange = debit("45.45", Some("123"), "ORANGE")
+      val credit = Transaction(
+        date = date,
+        amount = Money(BigDecimal("100.00"), currency = "EUR"),
+        direction = TransactionType.Credit,
+        variableSymbol = None,
+        description = "INV 2026005"
+      )
+      val shell = debit("73.71", None, "SHELL 8203")
 
-      val result = ExpensePlanner.toCandidates(List(debit, credit))
-
-      result.map(_.name) shouldBe List("ORANGE")
-      result.head.amount shouldBe Money(BigDecimal("45.45"), "EUR")
-    }
-
-    "derives a stable external ref from the transaction fields" in {
-      val debit = Transaction(date, Money(BigDecimal("45.45"), "EUR"), TransactionType.Debit, Some("123"), "ORANGE")
-
-      val first = ExpensePlanner.toCandidates(List(debit)).head.externalRef
-      val second = ExpensePlanner.toCandidates(List(debit)).head.externalRef
-
-      first shouldBe second
-      first shouldBe ExternalRef("2026-06-19|45.45|EUR|123|ORANGE")
+      ExpensePlanner.toCandidates(List(orange, credit, shell)) shouldBe List(
+        CandidateExpense(
+          ExternalRef("2026-06-19|45.45|EUR|123|ORANGE"),
+          "ORANGE",
+          Money(BigDecimal("45.45"), "EUR"),
+          date
+        ),
+        CandidateExpense(
+          ExternalRef("2026-06-19|73.71|EUR||SHELL 8203"),
+          "SHELL 8203",
+          Money(BigDecimal("73.71"), "EUR"),
+          date
+        )
+      )
     }
   }
+end ExpensePlannerTest
