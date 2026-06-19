@@ -99,22 +99,82 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       } shouldBe List("UHRADA POISTNEHO" -> Some(ReceiptRef("orange.jpg")))
     }
 
-    "with receipts and no CSV, attaches matched receipts to existing expenses" in {
+    "with receipts and no CSV, attaches matched receipts to existing expenses over the receipt-dated window" in {
       val existing = Expense(ExpenseId(5), "ACME", Money(BigDecimal("20.00"), "EUR"), date, None)
       val saved = Ref.unsafe[IO, Option[Plan]](None)
+      val queried = Ref.unsafe[IO, Option[DateWindow]](None)
 
       // bank is never read (no CSV), left as ???.
       given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO] {}
-      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO]:
+        override def listExpenses(window: DateWindow): IO[List[Expense]] = queried.set(Some(window)).as(List(existing))
       given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
       given OcrAlgebra[IO] = ocrReturning("20.00", date.minusDays(1))
       given PlanStore[IO] = savedBy(saved)
 
       PlanProgram.run[IO](None, anyReceipts).unsafeRunSync()
 
+      queried.get.unsafeRunSync() shouldBe Some(DateWindow(date.minusDays(2), date.plusDays(2)))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.AttachToExisting(id, ref), _) => id -> ref
       } shouldBe List(ExpenseId(5) -> ReceiptRef("inv.pdf"))
+    }
+
+    "flags a HEIC receipt as unreadable without loading it or calling OCR" in {
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      // no CSV; listExpenses, load and OCR are all left as ??? — a HEIC must reach none of them.
+      given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO] {}
+      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO] {}
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
+        override def list(folder: Path): IO[List[ReceiptFile]] =
+          IO.pure(List(ReceiptFile(ReceiptRef("photo.heic"), 100L)))
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](None, anyReceipts).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
+      } shouldBe List(ReceiptRef("photo.heic"))
+    }
+
+    "flags a receipt whose OCR could not read both amount and date" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("partial.jpg")))
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO]:
+        override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
+          IO.pure(OcrResult(Some(Money(BigDecimal("45.45"), "EUR")), None))
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
+      } shouldBe List(ReceiptRef("partial.jpg"))
+    }
+
+    "with a CSV that has no debits, flags receipts instead of matching them to existing expenses" in {
+      val credit =
+        Transaction(date, Money(BigDecimal("100.00"), "EUR"), TransactionType.Credit, None, None, None, None, "INV")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(credit))
+      // a CSV was given, so receipts pair with new expenses (none here) — existing expenses are never listed.
+      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO] {}
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("x.jpg")))
+      given OcrAlgebra[IO] = ocrReturning("50.00", date)
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
+      } shouldBe List(ReceiptRef("x.jpg"))
     }
 
     "flags a receipt that matches no transaction" in {
