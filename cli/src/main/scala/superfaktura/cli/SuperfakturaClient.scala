@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
-import org.http4s.{Header, Method, Request, Uri}
+import org.http4s.{DecodeFailure, Header, Method, Request, Uri}
 import org.typelevel.ci.*
 import superfaktura.{CliError, DateWindow, Expense, ExpenseId, ExpensePatch, Money, NewExpense, SuperfakturaAlgebra}
 
@@ -25,17 +25,24 @@ object SuperfakturaClient:
         get(
           s"expenses/index.json/created:3/created_since:${window.from}/created_to:${window.to}/per_page:100/page:$page/listinfo:1"
         ).flatMap: json =>
-          val pageCount = json.hcursor.get[Int]("pageCount").getOrElse(1)
-          val items = json.hcursor.downField("items").as[List[Json]].getOrElse(Nil)
-          items.traverse(decodeExpense).leftMap[Throwable](CliError.Api(200, _)).liftTo[F].map(_ -> pageCount)
+          val parsed =
+            for
+              pageCount <- json.hcursor.get[Int]("pageCount").leftMap(_.getMessage)
+              rawItems <- json.hcursor.get[List[Json]]("items").leftMap(_.getMessage)
+              expenses <- rawItems.traverse(decodeExpense)
+            yield (expenses, pageCount)
+          parsed.leftMap[Throwable](CliError.Decode(_)).liftTo[F]
 
       def loop(page: Int, acc: List[Expense]): F[List[Expense]] =
         fetchPage(page).flatMap: (expenses, pageCount) =>
-          if page >= pageCount then (acc ++ expenses).pure[F] else loop(page + 1, acc ++ expenses)
+          val gathered = acc ++ expenses
+          if page >= pageCount || expenses.isEmpty then gathered.pure[F] else loop(page + 1, gathered)
 
       loop(1, Nil)
 
     override def addExpense(request: NewExpense): F[ExpenseId] =
+      // Per the VAT decision the bank gross is recorded as `amount` with `vat = 0` (no net/VAT split);
+      // every statement line is an already-paid `invoice`.
       val body = Json.obj(
         "Expense" := Json.obj(
           "name" := request.name,
@@ -54,7 +61,7 @@ object SuperfakturaClient:
           .downField("data")
           .downField("Expense")
           .get[Long]("id")
-          .leftMap[Throwable](error => CliError.Api(200, s"missing expense id: ${error.getMessage}"))
+          .leftMap[Throwable](error => CliError.Decode(s"missing expense id: ${error.getMessage}"))
           .map(ExpenseId(_))
           .liftTo[F]
 
@@ -64,17 +71,28 @@ object SuperfakturaClient:
       post("expenses/edit", body).void
 
     private def get(path: String): F[Json] =
-      runChecked(Request[F](Method.GET, uri(path)).putHeaders(authHeader))
+      resolve(path).flatMap(uri => runChecked(Request[F](Method.GET, uri).putHeaders(authHeader)))
 
     private def post(path: String, body: Json): F[Json] =
-      runChecked(Request[F](Method.POST, uri(path)).putHeaders(authHeader).withEntity(body))
+      resolve(path).flatMap(uri => runChecked(Request[F](Method.POST, uri).putHeaders(authHeader).withEntity(body)))
 
     private def runChecked(request: Request[F]): F[Json] =
       client.run(request).use: response =>
-        response.as[Json].flatMap: json =>
-          val ok = response.status.isSuccess && json.hcursor.get[Int]("error").forall(_ == 0)
-          if ok then json.pure[F]
-          else Concurrent[F].raiseError(CliError.Api(response.status.code, errorMessage(json)))
+        response
+          .as[Json]
+          .adaptError { case failure: DecodeFailure => CliError.Decode(failure.message) }
+          .flatMap: json =>
+            val ok = response.status.isSuccess && json.hcursor.get[Int]("error").forall(_ == 0)
+            if ok then json.pure[F]
+            else Concurrent[F].raiseError(CliError.Api(response.status.code, errorMessage(json)))
+
+    private def resolve(path: String): F[Uri] =
+      Uri.fromString(s"${config.apiUrl.stripSuffix("/")}/$path") match
+        case Right(uri) if uri.scheme.contains(Uri.Scheme.https) => uri.pure[F]
+        case Right(_) =>
+          Concurrent[F].raiseError(CliError.ConfigInvalid(s"apiUrl must use https: ${config.apiUrl}"))
+        case Left(failure) =>
+          Concurrent[F].raiseError(CliError.ConfigInvalid(s"invalid apiUrl '${config.apiUrl}': ${failure.message}"))
 
     private val authHeader: Header.Raw =
       val email = URLEncoder.encode(config.email, UTF_8)
@@ -82,8 +100,6 @@ object SuperfakturaClient:
         ci"Authorization",
         s"SFAPI email=$email&apikey=${config.apiKey.value}&company_id=${config.companyId}&module=${config.module}"
       )
-
-    private def uri(path: String): Uri = Uri.unsafeFromString(s"${config.apiUrl}/$path")
   end live
 
   private def decodeExpense(item: Json): Either[String, Expense] =
