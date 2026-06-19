@@ -103,7 +103,7 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
   }
 
   "render" - {
-    "summarises the plan with a header and one line per item" in {
+    "summarises the plan with a header and one line per item, for every action variant" in {
       val plan = Plan(
         List(
           PlanItem(
@@ -114,14 +114,21 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
             ),
             PlanItemStatus.Pending
           ),
-          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf")), PlanItemStatus.Applied)
+          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf")), PlanItemStatus.Applied),
+          PlanItem(PlanAction.SkipDuplicate(ExternalRef("d"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
+          PlanItem(
+            PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
+            PlanItemStatus.Pending
+          )
         )
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 2 item(s)")
+      rendered should include("Plan: 4 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
+      rendered should include("skip duplicate of expense 7: already booked")
+      rendered should include("needs resolution (ambiguous); candidates: 1, 2")
     }
   }
 end ExpensePlannerTest
