@@ -12,6 +12,7 @@ ThisBuild / scalacOptions := Seq(
 
 val catsEffectV = "3.6.3"
 val catsV = "2.13.0"
+val scodecBitsV = "1.2.5"
 val http4sV = "0.23.34"
 val circeV = "0.14.15"
 val fs2DataV = "1.14.0"
@@ -24,6 +25,7 @@ lazy val core = (project in file("core"))
     name := "superfaktura-batteries-core",
     libraryDependencies ++= Seq(
       "org.typelevel" %% "cats-core" % catsV,
+      "org.scodec" %% "scodec-bits" % scodecBitsV,
       "org.scalatest" %% "scalatest" % scalatestV % Test
     )
   )

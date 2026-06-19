@@ -1,5 +1,7 @@
 package superfaktura.domain
 
+import scodec.bits.ByteVector
+
 import java.time.LocalDate
 
 case class Money(amount: BigDecimal, currency: String)
@@ -33,7 +35,7 @@ case class ReceiptRef(path: String)
 
 case class ReceiptFile(ref: ReceiptRef, sizeBytes: Long)
 
-case class ReceiptBytes(value: Array[Byte])
+case class ReceiptBytes(value: ByteVector)
 
 case class ExternalRef(value: String)
 
