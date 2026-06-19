@@ -319,8 +319,10 @@ Vocabulary follows the Baeldung tagless-final article and the author's workplace
 - **Store** — a specialisation of Algebra that reads/persists the application's **own** data over some storage
   (DB, files, …). Named with the **`Store` suffix** (`PlanStore[F]`, which round-trips the plan JSON on the
   filesystem). (DB-specific conventions like a `Tx` on writes don't apply to a file store.)
-- **Interpreter** — an *implementation* of an algebra/store. The default (live) one is a `given` in the companion,
-  named descriptively (`live`, `file`, `tatraBanka`, `scrimage`, `console`); test interpreters are the `…Stub`s.
+- **Interpreter** — an *implementation* of an algebra/store. The default (live) one is a `given` named descriptively
+  (`live`, `file`, `console`, …) in its **own object**. For IO-bound edges that object lives in `cli`
+  (`SuperfakturaClient`, `TatraBankaSource`, `FilePlanStore`, `ConsoleReporter`), so the edge libraries (http4s, fs2)
+  never leak into `core`; the trait it implements stays in `core`. Test interpreters are the `…Stub`s.
 - **Program** — *not* an algebra: effect-polymorphic business logic that composes algebras (and other programs). Named
   with the **`Program` suffix** (`PlanProgram`, `ApplyProgram`).
 
@@ -338,35 +340,38 @@ Rules:
 
 ### Algebras & stores (tagless final) and their interpreters
 
-Each is a `trait …[F[_]]` whose companion provides the **default (live) interpreter as a `given`**, plus a `…Stub`
-(trait name + `Stub`) for tests (see [Testing](#testing-strategy)).
+Each is a `trait …[F[_]]` in `core`. Its **live interpreter is a `given` in a dedicated `cli` object** (the edge
+libraries — http4s, fs2 — must not leak into `core`), plus a `…Stub` (trait name + `Stub`, under `core/src/test`) for
+tests (see [Testing](#testing-strategy)).
 
-| Algebra / Store (`trait …[F[_]]`) | Responsibility (edge) | Live interpreter (`given`) |
-|-----------------------------------|-----------------------|----------------------------|
-| `BankStatementSourceAlgebra[F]` | decode CSV → `List[Transaction]` | `tatraBanka` (CP1250) |
-| `ReceiptSourceAlgebra[F]` | enumerate + read receipt files | `fileSystem` |
-| `SuperfakturaAlgebra[F]` | list / create / edit expenses (HTTP) | `live` (http4s, prod/sandbox by URL) |
-| `PlanStore[F]` | persist/load plan (JSON, status incl.) | `file` |
-| `ImagePrepAlgebra[F]` | downscale oversized jpg/png to ≤4 MB | `scrimage` |
-| `ReporterAlgebra[F]` | render human summary | `console` |
+| Algebra / Store (`trait …[F[_]]`) | Responsibility (edge) | Live interpreter (`cli` object) |
+|-----------------------------------|-----------------------|---------------------------------|
+| `BankStatementSourceAlgebra[F]` | decode CSV → `List[Transaction]` | `TatraBankaSource.live` (CP1250) |
+| `ReceiptSourceAlgebra[F]` (M2) | enumerate + read receipt files | `fileSystem` |
+| `SuperfakturaAlgebra[F]` | list / create / edit expenses (HTTP) | `SuperfakturaClient.live` (http4s, prod/sandbox by URL) |
+| `PlanStore[F]` | persist/load plan (JSON, status incl.) | `FilePlanStore.at(path)` (factory, not a `given`) |
+| `ImagePrepAlgebra[F]` (M2) | downscale oversized jpg/png to ≤4 MB | `scrimage` |
+| `ReporterAlgebra[F]` | render human summary | `ConsoleReporter.live` |
 | `OcrAlgebra[F]` (M2) | read amount/date from receipt | cloud vision/LLM |
 | `CorrectionStrategyAlgebra[F]` (M4) | interactive correction (TUI) | `InteractiveTui` (when TUI lands) |
 
 Each also ships a `…Stub` test interpreter (e.g. `SuperfakturaAlgebraStub`, `PlanStoreStub`; every method `= ???`);
 see [Testing](#testing-strategy).
 
-Idiomatic shape — the live interpreter is a **conditional `given`** in the companion (`using` its collaborators), so it
-is found automatically in implicit scope; an alternative is bound by defining a local `given`/`implicit val` (see
-[Programs & wiring](#programs--wiring)):
+Idiomatic shape — the trait lives in `core`; the live interpreter is a **conditional `given`** (`using` its
+collaborators) in a `cli` object, brought into scope at the wiring site with `import SuperfakturaClient.given` (see
+[Programs & wiring](#programs--wiring)). An alternative is bound by defining a competing `given`/`implicit val`:
 
 ```scala
+// core
 trait SuperfakturaAlgebra[F[_]]:
   def listExpenses(window: DateWindow): F[List[Expense]]
   def addExpense(request: NewExpense): F[ExpenseId]
   def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit]
 
-object SuperfakturaAlgebra:
-  given live[F[_]: Concurrent](using client: Client[F], config: AppConfig): SuperfakturaAlgebra[F] =
+// cli — keeps http4s out of core
+object SuperfakturaClient:
+  given live[F[_]: Concurrent](using client: Client[F], config: SuperfakturaConfig): SuperfakturaAlgebra[F] =
     new SuperfakturaAlgebra[F]:
       override def listExpenses(window: DateWindow): F[List[Expense]] = ???
       override def addExpense(request: NewExpense): F[ExpenseId]      = ???
@@ -470,40 +475,46 @@ object PlanProgram:
     yield ()
 ```
 
-**Resolution model — no `Wiring` bag.** Each algebra's *live* interpreter is a `given` in its companion object, so it
-sits in **implicit scope** and is picked up automatically with no import. An alternative is selected simply by bringing
-a competing `given` into **lexical scope** (`given PlanStore[IO] = PlanStore.inMemory` or
-`implicit val store = PlanStoreStub.of(...)`); lexical givens outrank companion givens, so the override wins
-**without ambiguity** — and the live one is never even constructed. This is the workplace pattern: one default that
-resolves itself, others opted into by hand.
+**Resolution model — no `Wiring` bag.** Because the live interpreters live in `cli` objects (not the trait companions,
+which are in `core`), they are brought into implicit scope at the wiring site with `import SuperfakturaClient.given`
+(and `TatraBankaSource.given`, `ConsoleReporter.given`). Once the base givens they depend on — `given Client[IO]`,
+`given SuperfakturaConfig`, `given PlanStore[IO]` — are in scope, they resolve `PlanProgram.run[IO]` by themselves. An
+alternative is selected by bringing a competing `given` into **lexical scope** (e.g. a `…Stub` in a test); lexical
+givens outrank imported ones, so the override wins **without ambiguity** — and the live one is never even constructed.
 
-`Main` is the only `IO` site. It loads config with pureconfig, then the single `Resource` we need — the Ember client —
-is acquired; inside `use`, putting `given Client[IO]` and `given AppConfig` in scope is enough for every algebra's
-companion `given` to resolve `PlanProgram.run[IO]` by itself.
+`Main` is the only `IO` site. It loads config with pureconfig, then acquires the one `Resource` we need — the Ember
+client, wrapped once in the `Retry` middleware. A small `environment` helper takes the program as a context-function
+argument so both `plan` and `apply` share the wiring:
 
 ```scala
-object Main extends CommandIOApp(name = "superfaktura-batteries", header = "Bookkeeping CLI for Superfaktura.sk"):
-  override def main: Opts[IO[ExitCode]] =
-    (PlanCommand.opts orElse ApplyCommand.opts).map: inputs =>
-      ConfigSource.default.loadF[IO, AppConfig].flatMap: config =>
-        given AppConfig = config
-        EmberClientBuilder.default[IO].build.use: client =>
-          given Client[IO] = client
-          PlanProgram.run[IO](inputs).as(ExitCode.Success)   // .live, .file, … resolve from companions
+private def environment[A](plan: Path)(
+    program: (BankStatementSourceAlgebra[IO], SuperfakturaAlgebra[IO], PlanStore[IO], ReporterAlgebra[IO]) ?=> IO[A]
+): IO[A] =
+  loadConfig.flatMap: config =>
+    EmberClientBuilder.default[IO].build.use: ember =>
+      given Client[IO]         = Retry(retryPolicy)(ember)
+      given SuperfakturaConfig = config.superfaktura
+      given PlanStore[IO]      = FilePlanStore.at[IO](plan)
+      import SuperfakturaClient.given
+      import TatraBankaSource.given
+      import ConsoleReporter.given
+      program
 ```
 
-Tests need no `Resource` and no client: bringing a `given SuperfakturaAlgebraStub[IO]{ … }` into lexical scope shadows
-the companion default (which is never built because its `Client` dependency is never summoned). See
+Tests need no `Resource` and no client: they bring a `given SuperfakturaAlgebraStub[IO]{ … }` into lexical scope and
+never import the live interpreter, so the live one is never built (its `Client` dependency is never summoned). See
 [Testing](#testing-strategy).
 
 ### Subproject layout (sbt)
 
 Two sbt subprojects in `build.sbt`:
 
-- `core` — domain `case class` / `enum`, pure functions, algebra traits + companion `given` interpreters, Circe codecs,
-  and the `*Stub` traits (under `core/src/test`). No cats-effect runtime concerns beyond the `F[_]` constraints.
-- `cli` — IO-bound interpreters (http4s, fs2, filesystem, console), pureconfig loading, `decline` commands, `Main`
-  (`CommandIOApp`); depends on `core`, and on `core % "test->test"` to reuse the stubs.
+- `core` — domain `case class` / `enum`, pure functions, algebra/store **traits** and Programs, Circe codecs, and the
+  `*Stub` traits (under `core/src/test`). No cats-effect runtime concerns beyond the `F[_]` constraints; no live
+  interpreters (they'd pull http4s/fs2 into `core`).
+- `cli` — the live interpreters (http4s, fs2, filesystem, console) as `given`s in their own objects, pureconfig
+  loading, `decline` commands, `Main` (`CommandIOApp`); depends on `core`, and on `core % "test->test"` to reuse the
+  stubs.
 - Tests mirror packages under each subproject's `src/test/scala` root with a `Test` suffix.
 
 **File placement:** one public type per file (named after the type), even tiny ones. Files are **not** grouped into

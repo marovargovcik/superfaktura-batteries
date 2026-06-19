@@ -95,6 +95,26 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
         case other => fail(s"expected CliError.Decode, got: $other")
     }
 
+    "rejects a non-https apiUrl rather than sending the key over plaintext" in {
+      given SuperfakturaConfig = SuperfakturaConfig(
+        apiUrl = "http://insecure.example",
+        email = "e@example.com",
+        apiKey = Secret("key"),
+        companyId = "1",
+        module = "m"
+      )
+      given Client[IO] = respond("""{"data":{"Expense":{"id":1}},"error":0}""")
+      SuperfakturaClient.live[IO].addExpense(newExpense).attempt.unsafeRunSync() match
+        case Left(_: CliError.ConfigInvalid) => succeed
+        case other => fail(s"expected CliError.ConfigInvalid, got: $other")
+    }
+
+    "falls back to 'unknown error' when an error body carries no error_message" in {
+      algebra(respond("""{"error":1}""")).addExpense(newExpense).attempt.unsafeRunSync() match
+        case Left(CliError.Api(_, body)) => body shouldBe "unknown error"
+        case other => fail(s"expected CliError.Api, got: $other")
+    }
+
     "sends a URL-encoded SFAPI Authorization header" in {
       val app = HttpApp[IO]: request =>
         val auth = request.headers.get(ci"Authorization").map(_.head.value).getOrElse("")
@@ -129,7 +149,7 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
       val body =
         """{"pageCount":1,"items":[{"Expense":{"id":7,"name":"SHELL","amount":73.71,"currency":"EUR","created":"2026-06-16"}}]}"""
       algebra(respond(body)).listExpenses(window).unsafeRunSync() shouldBe
-        List(Expense(ExpenseId(7), "SHELL", Money(BigDecimal("73.71"), "EUR"), LocalDate.of(2026, 6, 16)))
+        List(Expense(ExpenseId(7), "SHELL", Money(BigDecimal("73.71"), "EUR"), LocalDate.of(2026, 6, 16), None))
     }
 
     "follows pagination across pages" in {
