@@ -2,7 +2,8 @@ package superfaktura
 
 case class MatchResult(
     paired: List[Pairing],
-    ambiguous: List[AmbiguousReceipt],
+    ambiguousReceipts: List[AmbiguousReceipt],
+    contestedTargets: List[ContestedTarget],
     unmatchedReceipts: List[Receipt],
-    unmatchedCandidates: List[CandidateExpense]
+    unmatchedTargets: List[MatchTarget]
 )
