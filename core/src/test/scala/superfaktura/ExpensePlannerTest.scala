@@ -1,7 +1,5 @@
 package superfaktura
 
-import superfaktura.domain.*
-
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 

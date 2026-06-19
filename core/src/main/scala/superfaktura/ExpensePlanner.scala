@@ -1,7 +1,5 @@
 package superfaktura
 
-import superfaktura.domain.*
-
 object ExpensePlanner:
 
   def toCandidates(transactions: List[Transaction]): List[CandidateExpense] =
