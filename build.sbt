@@ -15,6 +15,7 @@ val catsV = "2.13.0"
 val scodecBitsV = "1.2.5"
 val http4sV = "0.23.34"
 val circeV = "0.14.15"
+val fs2V = "3.13.0"
 val fs2DataV = "1.14.0"
 val declineV = "2.6.2"
 val pureconfigV = "0.17.10"
@@ -42,6 +43,7 @@ lazy val cli = (project in file("cli"))
       "io.circe" %% "circe-parser" % circeV,
       "io.circe" %% "circe-generic" % circeV,
       "org.gnieh" %% "fs2-data-csv" % fs2DataV,
+      "co.fs2" %% "fs2-io" % fs2V,
       "com.monovore" %% "decline" % declineV,
       "com.monovore" %% "decline-effect" % declineV,
       "com.github.pureconfig" %% "pureconfig-core" % pureconfigV,

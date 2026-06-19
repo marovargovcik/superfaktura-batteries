@@ -31,7 +31,7 @@ pre-existing expenses with no CSV.
 These derive directly from [`CLAUDE.md`](../CLAUDE.md) and constrain every later section.
 
 - **Pure functions first.** All business logic — parsing rows into candidates, duplicate detection, the
-  receipt-matching cascade, building the plan — is expressed as pure, total functions over immutable `case class` /
+  receipt matching, building the plan — is expressed as pure, total functions over immutable `case class` /
   `enum` data. No side effects, no clock, no randomness, no throwing in the core.
 - **All side effects live in `F[_]`.** Effectful work (reading files, HTTP, writing the plan, prompting the user) is
   never performed outside an effect. The concrete effect (`IO`) appears only at the entry point.
@@ -189,8 +189,8 @@ Filters are colon-separated **path segments**, not a query string. For dedup we 
 Parsing rules:
 
 - **Sign:** `Suma` is always positive; direction is in `Typ`. `Debet` → expense candidate; `Kredit` → ignored.
-- **Amount:** strip quotes, comma→dot (`"7850,00"` → `7850.00`). Guard against a thousands separator (not seen in
-  the sample — fail loudly if encountered).
+- **Amount:** strip quotes, drop space thousands separators, comma→dot (`"1 234,56"` → `1234.56`). Any other
+  separator (e.g. a `.` thousands grouping) is rejected as a parse error.
 - **Date:** primary = `Dátum spracovania`. For card payments, prefer the **real purchase timestamp embedded in
   `Informácia pre príjemcu`** when matching receipts.
 - **Vendor / name derivation:**
@@ -231,25 +231,31 @@ override (un-skip) in the plan file.
 
 ## Functional requirements (behaviour)
 
-### Receipt/invoice pairing — confidence cascade
+### Receipt/invoice pairing — amount + approximate date
 
-A receipt file is matched to a candidate/existing expense by a cascade of strategies, **highest confidence first**;
-the first confident match wins; the chosen strategy and a confidence score are recorded in the plan. Filenames are
-**not** used — receipts are not assumed to follow any naming convention.
+There is a **single** matching strategy. The only reliable facts about a receipt are the ones **printed on it**, so a
+cloud vision/LLM model reads the **amount** and **date** off the receipt's content, and we pair it to a transaction by:
 
-- **Vision OCR** (M3, highest confidence) — a cloud vision/LLM model reads amount / date / vendor / IČO from the
-  PDF/image and matches against expense fields.
-- **Amount + date heuristic** (M2, the workhorse) — match by amount within a date proximity window. For card POS, the
-  window is anchored on the embedded purchase datetime, not the booking date.
+- **Amount — exact.** The receipt total must equal the transaction amount to the cent. This is the strongest signal
+  and the primary discriminator.
+- **Date — approximate, within a buffer.** Bank processing lags the purchase by 1–3 days, so the transaction posts
+  *after* the receipt date. The transaction date must fall in `[receiptDate − 1, receiptDate + 3]` (configurable;
+  default absorbs the lag plus a day of slack the other way).
 
-At M2 (before OCR) matching is amount+date only, so two receipts with the same amount in the same window are an
-expected ambiguity → surfaced as `NeedsResolution` (below), not guessed.
+Deliberately **not** used (both unreliable):
+
+- **Filenames** — the user does not rename files; no naming convention is assumed.
+- **File metadata** — filesystem created/modified times, EXIF, etc. bear no dependable relation to the purchase.
+
+Because the amount and date come from the receipt's *content*, **vision/OCR is a prerequisite for pairing** — there is
+no pre-OCR heuristic (there is nothing reliable to match on without reading the receipt).
 
 Rules:
 
-- Each receipt yields: matched expense (or `None`), matching strategy, confidence.
-- **Ambiguity** (one receipt → several candidates, or vice-versa) is surfaced as a **conflict** in the plan for the
-  user to resolve — never silently guessed.
+- Each receipt yields a matched transaction (or none), recording the matched amount/date.
+- **Ambiguity** (one receipt matching several transactions in the amount+window, or several receipts matching one
+  transaction) is surfaced as a `NeedsResolution` item in the plan for the user to resolve — never silently guessed.
+- Each transaction pairs with at most one receipt and vice versa (1:1).
 - Unmatched receipts and unmatched expenses are both listed explicitly.
 - Expenses classified as "no receipt expected" (bank fees) are excluded from unmatched-expense noise.
 
@@ -300,8 +306,8 @@ Rules:
 - **JSON:** Circe (`semiauto` codecs in companion objects; no `generic.auto`).
 - **CSV:** `fs2-data-csv` over an fs2 byte stream decoded from CP1250.
 - **Images:** scrimage for downscaling oversized jpg/png attachments to the 4 MB limit.
-- **OCR (M3):** a cloud vision/LLM model reads receipts; adds its own API key/cost (separate config section) and sends
-  images off-machine. Behind `OcrAlgebra[F]`, so M0–M2 ship without it.
+- **OCR (M2):** a cloud vision/LLM model reads the amount/date off receipts; adds its own API key/cost (separate
+  config section) and sends images off-machine. Behind `OcrAlgebra[F]`; prerequisite for receipt pairing.
 - **CLI:** `decline` + `decline-effect` (`Command`/`Opts`, `CommandIOApp`).
 
 ### Naming & layering conventions
@@ -343,7 +349,7 @@ Each is a `trait …[F[_]]` whose companion provides the **default (live) interp
 | `PlanStore[F]` | persist/load plan (JSON, status incl.) | `file` |
 | `ImagePrepAlgebra[F]` | downscale oversized jpg/png to ≤4 MB | `scrimage` |
 | `ReporterAlgebra[F]` | render human summary | `console` |
-| `OcrAlgebra[F]` (M3) | read amount/date/vendor from receipt | cloud vision/LLM |
+| `OcrAlgebra[F]` (M2) | read amount/date from receipt | cloud vision/LLM |
 | `CorrectionStrategyAlgebra[F]` (M4) | interactive correction (TUI) | `InteractiveTui` (when TUI lands) |
 
 Each also ships a `…Stub` test interpreter (e.g. `SuperfakturaAlgebraStub`, `PlanStoreStub`; every method `= ???`);
@@ -379,8 +385,8 @@ enum PlanItemStatus:
   case Pending, Applied, Skipped, Failed
 
 // One uniform list of items, each carrying a status, so apply traverses and re-runs uniformly and
-// the hand-edited plan file has a single shape. (MatchStrategy — AmountAndDate, VisionOcr — arrives
-// with receipt matching at M2/M3.)
+// the hand-edited plan file has a single shape. (Matching is a single amount+date-window strategy, so
+// no MatchStrategy enum is needed.)
 case class Plan(items: List[PlanItem])
 
 case class PlanItem(action: PlanAction, status: PlanItemStatus)
@@ -553,7 +559,7 @@ superfaktura {
 
 Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the important properties; no mocking library.
 
-- **Pure core** (`ExpensePlanner`, CSV row parsing, dedup, matching cascade): unit + property tests, no interpreters.
+- **Pure core** (`ExpensePlanner`, CSV row parsing, dedup, receipt matching): unit + property tests, no interpreters.
 - **`*Stub` per algebra/store/program.** For each algebra we ship a `FooStub` whose every method is `= ???`; a test
   extends it and overrides **only** the methods that test exercises. Any unexpected call hits `???` and fails loudly,
   so a test can't accidentally depend on an interaction it didn't declare. Example:
@@ -572,14 +578,16 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   Stubs live in `core/src/test` and are shared with `cli` tests via `dependsOn(core % "test->test")`.
 - **Hard-coded dates/IDs** for determinism; use `TemporalAdjusters` only where a dynamic date is genuinely required.
 - Properties worth testing: `Debet`/`Kredit` filtering; CP1250 + comma-decimal amount parsing; merchant/datetime
-  extraction from `Informácia pre príjemcu`; external-ref stability; cascade precedence and conflict surfacing;
+  extraction from `Informácia pre príjemcu`; external-ref stability; amount + date-window matching and conflict
+  surfacing;
   plan round-trip (encode → edit → decode); `apply` idempotency via persisted item status; defensive API error
   decoding.
 
 ## Resolved decisions
 
-- **Matching** — amount+date is the workhorse (M2); a **cloud vision/LLM** model enriches it (M3). **Filenames are not
-  used** — no naming convention assumed.
+- **Matching** — a single strategy: a **cloud vision/LLM** model reads the amount + date off the receipt, paired to a
+  transaction by **exact amount** and an **asymmetric date window** `[receipt−1, receipt+3]` (bank lag). **Filenames
+  and file metadata are not used** (both unreliable), so OCR is a prerequisite for pairing — no pre-OCR heuristic.
 - **Expense `type`/category** — always `invoice`, no category; re-categorise in the SF UI if ever needed.
 - **Oversized attachments** — auto-downscale jpg/png to ≤4 MB (scrimage); PDFs and HEIC over 4 MB are flagged in the
   plan (no native JVM HEIC decode).
@@ -592,8 +600,8 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
 
 ## Still open
 
-- **Vision provider (M3)** — which cloud vision/LLM (e.g. Claude vision vs Google Vision), and its config/cost/key.
-  Deferred to M3; nothing earlier depends on it.
+- **Vision provider (M2)** — which cloud vision/LLM (e.g. Claude vision vs Google Vision), and its config/cost/key.
+  Needed for receipt pairing in M2; nothing in M0–M1 depends on it.
 - **`checksum` idempotency** — documented for invoices, unconfirmed for `/expenses/add`; we rely on the external-ref +
   persisted plan status regardless, so this is informational, not blocking.
 
@@ -607,17 +615,17 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   first), Iron refinement types on the CSV/JSON/config boundaries (+ smart constructors for cross-field invariants),
   dedup, `plan`/`apply` with `FilePlanStore` (file-mode correction = the plain plan/apply split). Delivers B, C (and A
   without receipts).
-- **M2 — Receipt pairing:** amount/date matching, base64 attach via `add`/`edit` with `ImagePrepAlgebra` downscaling,
-  idempotency via persisted item status. Delivers full A and D.
-- **M3 — Vision OCR** added to the cascade (cloud vision/LLM; provider chosen at M3).
-- **M4 — Interactive TUI** — introduces `CorrectionStrategyAlgebra[F]` + a TUI interpreter over the existing plan
+- **M2 — Receipt pairing (vision OCR):** `OcrAlgebra.live` (cloud vision/LLM reads amount + date off each receipt);
+  match by exact amount + the `[receipt−1, receipt+3]` date window; base64 attach via `add`/`edit` with
+  `ImagePrepAlgebra` downscaling; idempotency via persisted item status. Delivers full A and D.
+- **M3 — Interactive TUI** — introduces `CorrectionStrategyAlgebra[F]` + a TUI interpreter over the existing plan
   model.
 
 ## Success criteria
 
 - A month of Tatra banka transactions becomes correct Superfaktura expenses via one reviewed `plan` + `apply`, with
   **no duplicates on re-run** (verified against the sandbox first).
-- The large majority of receipts pair automatically (amount+date, then vision OCR); the rest surface as
-  `NeedsResolution` for a one-line fix in the plan file.
+- The large majority of receipts pair automatically (vision OCR reads amount + date; matched by exact amount and the
+  date window); the rest surface as `NeedsResolution` for a one-line fix in the plan file.
 - The printed plan accurately predicts every write `apply` performs.
 - The pure `core` module is covered by mock-free tests; all IO is isolated in algebra interpreters in `cli`.
