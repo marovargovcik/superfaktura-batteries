@@ -2,7 +2,7 @@ package superfaktura.cli
 
 import cats.effect.Concurrent
 import cats.syntax.all.*
-import io.circe.Json
+import io.circe.{ACursor, Json}
 import io.circe.syntax.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
@@ -57,8 +57,9 @@ object ClaudeOcr:
         .as[Json]
         .adaptError { case failure: DecodeFailure => CliError.Decode(failure.message) }
         .flatMap: json =>
-          if !response.status.isSuccess then Concurrent[F].raiseError(CliError.Api(response.status.code, json.noSpaces))
-          else extract(json).liftTo[F]
+          if !response.status.isSuccess then
+            Concurrent[F].raiseError(CliError.Api(response.status.code, errorMessage(json)))
+          else toolUseInput(json).map(parseInput).liftTo[F]
 
     private def messagesUri: F[Uri] =
       Uri.fromString(s"${config.apiUrl.stripSuffix("/")}/v1/messages") match
@@ -92,16 +93,20 @@ object ClaudeOcr:
     )
   )
 
-  private def extract(json: Json): Either[CliError, OcrResult] =
-    json.hcursor.downField("content").as[List[Json]].leftMap(failure => CliError.Decode(failure.getMessage)).flatMap {
+  private def toolUseInput(json: Json): Either[CliError, ACursor] =
+    json.hcursor.downField("content").as[List[Json]].leftMap(failure => CliError.Decode(failure.getMessage)).flatMap:
       blocks =>
-        blocks.find(_.hcursor.get[String]("type").toOption.contains("tool_use")) match
-          case None => Left(CliError.Decode("Claude response had no tool_use block"))
-          case Some(block) =>
-            val input = block.hcursor.downField("input")
-            val amount = (input.get[BigDecimal]("amount").toOption, input.get[String]("currency").toOption)
-              .mapN(Money(_, _))
-            val date = input.get[String]("date").toOption.flatMap(raw => Try(LocalDate.parse(raw)).toOption)
-            Right(OcrResult(amount, date))
-    }
+        blocks
+          .find(_.hcursor.get[String]("type").toOption.contains("tool_use"))
+          .map(_.hcursor.downField("input"))
+          .toRight(CliError.Decode("Claude response had no tool_use block"))
+
+  private def parseInput(input: ACursor): OcrResult =
+    // An amount is only usable paired with its currency, so a total we cannot denominate is dropped, not guessed.
+    val amount = (input.get[BigDecimal]("amount").toOption, input.get[String]("currency").toOption).mapN(Money(_, _))
+    val date = input.get[String]("date").toOption.flatMap(raw => Try(LocalDate.parse(raw)).toOption)
+    OcrResult(amount, date)
+
+  private def errorMessage(json: Json): String =
+    json.hcursor.downField("error").get[String]("message").getOrElse("unknown error")
 end ClaudeOcr

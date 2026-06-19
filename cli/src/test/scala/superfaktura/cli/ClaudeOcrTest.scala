@@ -51,10 +51,22 @@ class ClaudeOcrTest extends AnyFreeSpec with Matchers:
         OcrResult(Some(Money(BigDecimal("73.71"), "EUR")), Some(LocalDate.of(2026, 6, 13)))
     }
 
-    "leaves a field empty when the model omits it" in {
+    "leaves the date empty when the model omits it" in {
       val client = respond(toolUse("""{"amount":10.00,"currency":"EUR"}"""))
       algebra(client).read(bytes, ReceiptMedia.Jpeg).unsafeRunSync() shouldBe
         OcrResult(Some(Money(BigDecimal("10.00"), "EUR")), None)
+    }
+
+    "drops the amount when the currency is missing (an amount we can't denominate is not a Money)" in {
+      val client = respond(toolUse("""{"amount":10.00,"date":"2026-06-13"}"""))
+      algebra(client).read(bytes, ReceiptMedia.Jpeg).unsafeRunSync() shouldBe
+        OcrResult(None, Some(LocalDate.of(2026, 6, 13)))
+    }
+
+    "treats an unparseable date as absent rather than failing" in {
+      val client = respond(toolUse("""{"amount":1.00,"currency":"EUR","date":"2026-13-40"}"""))
+      algebra(client).read(bytes, ReceiptMedia.Jpeg).unsafeRunSync() shouldBe
+        OcrResult(Some(Money(BigDecimal("1.00"), "EUR")), None)
     }
 
     "raises CliError.Decode when the response has no tool_use block" in {
@@ -64,15 +76,23 @@ class ClaudeOcrTest extends AnyFreeSpec with Matchers:
         case other => fail(s"expected CliError.Decode, got: $other")
     }
 
-    "raises CliError.Api on a non-2xx response" in {
-      val client = respond("""{"type":"error","error":{"type":"overloaded_error"}}""", Status.ServiceUnavailable)
+    "raises CliError.Decode when content is not an array" in {
+      val client = respond("""{"content":"oops"}""")
       algebra(client).read(bytes, ReceiptMedia.Jpeg).attempt.unsafeRunSync() match
-        case Left(CliError.Api(503, _)) => succeed
+        case Left(_: CliError.Decode) => succeed
+        case other => fail(s"expected CliError.Decode, got: $other")
+    }
+
+    "raises CliError.Api carrying the Anthropic error message on a non-2xx response" in {
+      val body = """{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"""
+      algebra(respond(body, Status.ServiceUnavailable)).read(bytes, ReceiptMedia.Jpeg).attempt.unsafeRunSync() match
+        case Left(CliError.Api(503, message)) => message should include("Overloaded")
         case other => fail(s"expected Api(503), got: $other")
     }
 
     "raises CliError.ConfigInvalid when apiUrl is not https" in {
-      given ClaudeConfig = ClaudeConfig("http://insecure.example", Secret("k"), "m", 256)
+      given ClaudeConfig =
+        ClaudeConfig(apiUrl = "http://insecure.example", apiKey = Secret("k"), model = "m", maxTokens = 256)
       given Client[IO] = respond(toolUse("""{"amount":1.0,"currency":"EUR","date":"2026-06-13"}"""))
       ClaudeOcr.live[IO].read(bytes, ReceiptMedia.Jpeg).attempt.unsafeRunSync() match
         case Left(_: CliError.ConfigInvalid) => succeed
