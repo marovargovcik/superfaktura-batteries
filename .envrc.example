@@ -1,0 +1,7 @@
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_API_URL="https://api.anthropic.com"
+export ANTHROPIC_MODEL="claude-haiku-4-5-20251001"
+export SUPERFAKTURA_API_EMAIL="email@email.com"
+export SUPERFAKTURA_API_KEY=""
+export SUPERFAKTURA_API_URL="https://moja.superfaktura.sk"
+export SUPERFAKTURA_COMPANY_ID=""

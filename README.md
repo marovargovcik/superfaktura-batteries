@@ -14,10 +14,6 @@ Turn a bank statement into correctly-recorded expenses, with receipts attached â
 
 The two capabilities compose or run independently (expenses only, or receipts-only against existing expenses).
 
-> **Status:** early scaffold (milestone M0). The build, CLI, config and pure-core foundations are in place; the
-> expense-creation and receipt-pairing logic land in the next milestones. See [`docs/pdr.md`](docs/pdr.md) for the full
-> design and roadmap.
-
 ## Architecture
 
 Scala 3 + cats-effect, functional-core / imperative-shell, tagless final:
@@ -47,8 +43,14 @@ vars and provides defaults:
 | `SUPERFAKTURA_API_KEY` | API key |
 | `SUPERFAKTURA_API_URL` | Base URL (use `https://sandbox.superfaktura.sk` to test) |
 | `SUPERFAKTURA_COMPANY_ID` | Company id |
+| `ANTHROPIC_API_KEY` | Anthropic key for receipt OCR (Claude vision); only used with `--receipts` |
+| `ANTHROPIC_API_URL` | Anthropic base URL (default `https://api.anthropic.com`) |
+| `ANTHROPIC_MODEL` | Model for OCR (default `claude-haiku-4-5-20251001`) |
 
 Locally, put them in a git-ignored `.envrc` (loaded by [direnv](https://direnv.net/)) or export them in your shell.
+
+> **Receipts leave your machine.** With `--receipts`, each receipt image/PDF is sent to the Anthropic API for OCR, and
+> the matched receipt is uploaded to SuperFaktura as the expense attachment. Both API URLs are required to be `https`.
 
 ## Run
 
