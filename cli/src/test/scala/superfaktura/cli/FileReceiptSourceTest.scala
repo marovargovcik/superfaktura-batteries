@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
-import superfaktura.ReceiptRef
+import superfaktura.{CliError, ReceiptRef}
 
 import java.nio.file.{Files as JFiles, Path}
 
@@ -34,5 +34,17 @@ class FileReceiptSourceTest extends AnyFreeSpec with Matchers:
     val file = JFiles.write(dir.resolve("invoice.pdf"), Array[Byte](7, 8, 9))
 
     algebra.load(ReceiptRef(file.toString)).unsafeRunSync().value shouldBe ByteVector(7, 8, 9)
+  }
+
+  "list maps a missing folder to CliError.FileAccess" in {
+    algebra.list(Path.of("/no/such/receipts/folder")).attempt.unsafeRunSync() match
+      case Left(_: CliError.FileAccess) => succeed
+      case other => fail(s"expected CliError.FileAccess, got: $other")
+  }
+
+  "load maps a missing file to CliError.FileAccess" in {
+    algebra.load(ReceiptRef("/no/such/receipt.pdf")).attempt.unsafeRunSync() match
+      case Left(_: CliError.FileAccess) => succeed
+      case other => fail(s"expected CliError.FileAccess, got: $other")
   }
 end FileReceiptSourceTest

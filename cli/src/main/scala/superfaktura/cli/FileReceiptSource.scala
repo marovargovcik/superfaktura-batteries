@@ -30,6 +30,6 @@ object FileReceiptSource:
         .forAsync[F]
         .readAll(FsPath(ref.path))
         .compile
-        .toVector
-        .map(bytes => ReceiptBytes(ByteVector(bytes.toArray)))
+        .to(ByteVector)
+        .map(ReceiptBytes(_))
         .adaptError { case error: IOException => CliError.FileAccess(error.getMessage) }
