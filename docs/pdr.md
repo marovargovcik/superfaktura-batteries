@@ -1,9 +1,9 @@
 ---
-title: superfaktura CLI — Project Design Requirements
+title: superfaktura-batteries — Project Design Requirements
 icon: 🧾
 ---
 
-# superfaktura CLI — Project Design Requirements
+# superfaktura-batteries — Project Design Requirements
 
 > [!NOTE]
 > Status: Draft v3 (Scala) · Author: mvk@famly.co · Date: 2026-06-19.
@@ -43,7 +43,9 @@ These derive directly from [`CLAUDE.md`](../CLAUDE.md) and constrain every later
   are extracted from `F[Option]`/`F[Either]` with cats stdlib (`.liftTo`, `OptionT`), not a bespoke syntax layer. Error
   combinators are ordered extraction → retry → recovery. The pure core never throws — it returns data.
 - **Validate only at boundaries.** Untrusted input (CSV, API JSON, the edited plan file) is decoded with Circe at the
-  edge into trusted domain types. The core trusts its inputs and does not re-validate.
+  edge into trusted domain types. The core trusts its inputs and does not re-validate. Single-field constraints
+  (non-empty, ISO-4217 currency, valid URL, …) are enforced with **Iron** refinement types at decode time (M1);
+  cross-field invariants (e.g. `DateWindow.from <= to`) use smart constructors, which Iron cannot express.
 - **Config at the entry point only.** Configuration is HOCON (`*.conf`) loaded once in `Main` via pureconfig, never
   inside library code.
 - **Simplicity first.** Implement what is asked; no speculative configurability. The one configurable axis that is an
@@ -95,8 +97,8 @@ Authorization: SFAPI email=<urlenc-email>&apikey=<key>&company_id=<id>&module=<n
 ```
 
 - `email`, `apikey`, `company_id` come from env, loaded once at the entry point and never logged.
-- `module` is a free-form client identifier we choose (e.g. `superfaktura-cli 1.0`). The docs mark it required but the
-  examples omit it; we send it to be safe.
+- `module` is a free-form client identifier we choose (e.g. `superfaktura-batteries 1.0`). The docs mark it required
+  but the examples omit it; we send it to be safe.
 
 > [!WARNING]
 > Un-encoded `@`/`+` in the email is the #1 documented cause of auth failures.
@@ -373,20 +375,20 @@ The core is plain functions over immutable data, modelled with `enum` ADTs — u
 enum TransactionType:
   case Debit, Credit
 
-enum MatchStrategy:
-  case AmountAndDate, VisionOcr
-
 enum PlanItemStatus:
   case Pending, Applied, Skipped, Failed
 
-// One uniform list of items; conflicts/unmatched are items with a NeedsResolution status, so the
-// hand-edited plan file has a single shape to read and traverse.
+// One uniform list of items, each carrying a status, so apply traverses and re-runs uniformly and
+// the hand-edited plan file has a single shape. (MatchStrategy — AmountAndDate, VisionOcr — arrives
+// with receipt matching at M2/M3.)
 case class Plan(items: List[PlanItem])
 
-enum PlanItem:
-  case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef], status: PlanItemStatus)
-  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, status: PlanItemStatus)
-  case Skipped(ref: ExternalRef, reason: String, matched: ExpenseId)
+case class PlanItem(action: PlanAction, status: PlanItemStatus)
+
+enum PlanAction:
+  case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])
+  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef)
+  case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
 
 object ExpensePlanner:
@@ -474,7 +476,7 @@ is acquired; inside `use`, putting `given Client[IO]` and `given AppConfig` in s
 companion `given` to resolve `PlanProgram.run[IO]` by itself.
 
 ```scala
-object Main extends CommandIOApp(name = "superfaktura", header = "Bookkeeping CLI for Superfaktura.sk"):
+object Main extends CommandIOApp(name = "superfaktura-batteries", header = "Bookkeeping CLI for Superfaktura.sk"):
   override def main: Opts[IO[ExitCode]] =
     (PlanCommand.opts orElse ApplyCommand.opts).map: inputs =>
       ConfigSource.default.loadF[IO, AppConfig].flatMap: config =>
@@ -497,6 +499,10 @@ Two sbt subprojects in `build.sbt`:
 - `cli` — IO-bound interpreters (http4s, fs2, filesystem, console), pureconfig loading, `decline` commands, `Main`
   (`CommandIOApp`); depends on `core`, and on `core % "test->test"` to reuse the stubs.
 - Tests mirror packages under each subproject's `src/test/scala` root with a `Test` suffix.
+
+**File placement:** one public type per file (named after the type), even tiny ones. Files are **not** grouped into
+technical-kind folders (no `domain/`, no `algebra/`) — `core` keeps domain types, algebras/stores and pure functions
+side by side in one package; the only structural split is by layer/subproject (`core` vs `cli`).
 
 ### Tooling: formatting & linting
 
@@ -532,7 +538,7 @@ superfaktura {
   api-key    = ${?SUPERFAKTURA_API_KEY}
   company-id = ""
   company-id = ${?SUPERFAKTURA_COMPANY_ID}
-  module     = "superfaktura-cli 1.0"
+  module     = "superfaktura-batteries 1.0"
 }
 ```
 
@@ -579,6 +585,10 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   plan (no native JVM HEIC decode).
 - **VAT** — record the bank gross as `amount` with `vat = 0` (no net/VAT split); see the create-expense field
   mapping.
+- **Boundary validation** — **Iron** (Scala 3-native refinement types) for single-field constraints at decode time,
+  introduced in M1 with the CSV/JSON decoders. Chosen over `refined` (Scala-2-era) for better Scala 3 ergonomics;
+  cross-field invariants use smart constructors instead. Not added in M0 (no untrusted-input decoders yet, and it
+  would clash with the empty-string config defaults).
 
 ## Still open
 
@@ -594,7 +604,7 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   committed `application.conf` (defaults + `${?ENV}`), algebra traits with companion `given`s + `*Stub`s, pure-core
   signatures + first tests.
 - **M1 — Expenses from CSV:** `TatraBankaCsv` interpreter, pure `toCandidates`, `SuperfakturaAlgebra.live` (sandbox
-  first),
+  first), Iron refinement types on the CSV/JSON/config boundaries (+ smart constructors for cross-field invariants),
   dedup, `plan`/`apply` with `FilePlanStore` (file-mode correction = the plain plan/apply split). Delivers B, C (and A
   without receipts).
 - **M2 — Receipt pairing:** amount/date matching, base64 attach via `add`/`edit` with `ImagePrepAlgebra` downscaling,
