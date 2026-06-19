@@ -101,4 +101,27 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       refOf(a) should not be refOf(b)
     }
   }
+
+  "render" - {
+    "summarises the plan with a header and one line per item" in {
+      val plan = Plan(
+        List(
+          PlanItem(
+            PlanAction.CreateExpense(
+              ExternalRef("r"),
+              CandidateExpense(ExternalRef("r"), "SHELL 8203", Money(BigDecimal("73.71"), "EUR"), date),
+              None
+            ),
+            PlanItemStatus.Pending
+          ),
+          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf")), PlanItemStatus.Applied)
+        )
+      )
+
+      val rendered = ExpensePlanner.render(plan)
+      rendered should include("Plan: 2 item(s)")
+      rendered should include("create 'SHELL 8203' 73.71 EUR")
+      rendered should include("attach /x.pdf to expense 42")
+    }
+  }
 end ExpensePlannerTest
