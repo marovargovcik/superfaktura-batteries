@@ -1,7 +1,7 @@
 package superfaktura
 
 import io.circe.Codec
-import io.circe.generic.semiauto.deriveCodec
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 
 enum PlanAction:
   case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])
@@ -10,4 +10,5 @@ enum PlanAction:
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
 
 object PlanAction:
-  given Codec[PlanAction] = deriveCodec
+  private given Configuration = Configuration.default.withDiscriminator("type")
+  given Codec[PlanAction] = ConfiguredCodec.derived[PlanAction]

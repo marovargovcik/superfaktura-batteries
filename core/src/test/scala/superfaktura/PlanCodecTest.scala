@@ -1,6 +1,6 @@
 package superfaktura
 
-import io.circe.Decoder
+import io.circe.{Decoder, Json}
 import io.circe.syntax.*
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
@@ -14,16 +14,22 @@ class PlanCodecTest extends AnyFreeSpec with Matchers:
       PlanItem(
         PlanAction.CreateExpense(
           ref = ExternalRef("abc123"),
-          expense = CandidateExpense(ExternalRef("abc123"), "SHELL 8203", Money(BigDecimal("73.71"), "EUR"),
-            LocalDate.of(2026, 6, 16)),
+          expense = CandidateExpense(
+            ExternalRef("abc123"),
+            "SHELL 8203",
+            Money(BigDecimal("73.71"), "EUR"),
+            LocalDate.of(2026, 6, 16)
+          ),
           attach = Some(ReceiptRef("/receipts/shell.pdf"))
         ),
         PlanItemStatus.Pending
       ),
       PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/receipts/inv.pdf")), PlanItemStatus.Applied),
       PlanItem(PlanAction.SkipDuplicate(ExternalRef("def456"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
-      PlanItem(PlanAction.NeedsResolution(ExternalRef("ghi789"), List(ExpenseId(1), ExpenseId(2)), "ambiguous amount"),
-        PlanItemStatus.Pending)
+      PlanItem(
+        PlanAction.NeedsResolution(ExternalRef("ghi789"), List(ExpenseId(1), ExpenseId(2)), "ambiguous amount"),
+        PlanItemStatus.Pending
+      )
     )
   )
 
@@ -31,4 +37,14 @@ class PlanCodecTest extends AnyFreeSpec with Matchers:
     "round-trips every PlanItem variant through JSON" in {
       Decoder[Plan].decodeJson(plan.asJson) shouldBe Right(plan)
     }
+
+    "encodes a PlanAction with a flat `type` discriminator" in {
+      val action: PlanAction = PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"))
+      action.asJson.hcursor.get[String]("type") shouldBe Right("AttachToExisting")
+    }
+
+    "rejects an unknown status string" in {
+      Decoder[PlanItemStatus].decodeJson(Json.fromString("Bogus")).isLeft shouldBe true
+    }
   }
+end PlanCodecTest
