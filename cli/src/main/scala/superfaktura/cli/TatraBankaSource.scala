@@ -17,7 +17,7 @@ object TatraBankaSource:
   private val windows1250 = Charset.forName("windows-1250")
 
   given live[F[_]: Async]: BankStatementSourceAlgebra[F] with
-    def read(path: Path): F[List[Transaction]] =
+    override def read(path: Path): F[List[Transaction]] =
       Files
         .forAsync[F]
         .readAll(FsPath.fromNioPath(path))
@@ -27,7 +27,7 @@ object TatraBankaSource:
         .evalMap(toTransaction[F])
         .compile
         .toList
-        .adaptError { case error: IOException => CliError.FileUnreadable(error.getMessage) }
+        .adaptError { case error: IOException => CliError.FileAccess(error.getMessage) }
 
   private def toTransaction[F[_]: ApplicativeThrow](row: CsvRow[String]): F[Transaction] =
     TatraBankaCsv.parseRow(row.toMap).leftMap[Throwable](CliError.CsvInvalid(_)).liftTo[F]
