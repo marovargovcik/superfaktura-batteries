@@ -43,7 +43,9 @@ These derive directly from [`CLAUDE.md`](../CLAUDE.md) and constrain every later
   are extracted from `F[Option]`/`F[Either]` with cats stdlib (`.liftTo`, `OptionT`), not a bespoke syntax layer. Error
   combinators are ordered extraction → retry → recovery. The pure core never throws — it returns data.
 - **Validate only at boundaries.** Untrusted input (CSV, API JSON, the edited plan file) is decoded with Circe at the
-  edge into trusted domain types. The core trusts its inputs and does not re-validate.
+  edge into trusted domain types. The core trusts its inputs and does not re-validate. Single-field constraints
+  (non-empty, ISO-4217 currency, valid URL, …) are enforced with **Iron** refinement types at decode time (M1);
+  cross-field invariants (e.g. `DateWindow.from <= to`) use smart constructors, which Iron cannot express.
 - **Config at the entry point only.** Configuration is HOCON (`*.conf`) loaded once in `Main` via pureconfig, never
   inside library code.
 - **Simplicity first.** Implement what is asked; no speculative configurability. The one configurable axis that is an
@@ -579,6 +581,10 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   plan (no native JVM HEIC decode).
 - **VAT** — record the bank gross as `amount` with `vat = 0` (no net/VAT split); see the create-expense field
   mapping.
+- **Boundary validation** — **Iron** (Scala 3-native refinement types) for single-field constraints at decode time,
+  introduced in M1 with the CSV/JSON decoders. Chosen over `refined` (Scala-2-era) for better Scala 3 ergonomics;
+  cross-field invariants use smart constructors instead. Not added in M0 (no untrusted-input decoders yet, and it
+  would clash with the empty-string config defaults).
 
 ## Still open
 
@@ -594,7 +600,7 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   committed `application.conf` (defaults + `${?ENV}`), algebra traits with companion `given`s + `*Stub`s, pure-core
   signatures + first tests.
 - **M1 — Expenses from CSV:** `TatraBankaCsv` interpreter, pure `toCandidates`, `SuperfakturaAlgebra.live` (sandbox
-  first),
+  first), Iron refinement types on the CSV/JSON/config boundaries (+ smart constructors for cross-field invariants),
   dedup, `plan`/`apply` with `FilePlanStore` (file-mode correction = the plain plan/apply split). Delivers B, C (and A
   without receipts).
 - **M2 — Receipt pairing:** amount/date matching, base64 attach via `add`/`edit` with `ImagePrepAlgebra` downscaling,
