@@ -373,20 +373,20 @@ The core is plain functions over immutable data, modelled with `enum` ADTs — u
 enum TransactionType:
   case Debit, Credit
 
-enum MatchStrategy:
-  case AmountAndDate, VisionOcr
-
 enum PlanItemStatus:
   case Pending, Applied, Skipped, Failed
 
-// One uniform list of items; conflicts/unmatched are items with a NeedsResolution status, so the
-// hand-edited plan file has a single shape to read and traverse.
+// One uniform list of items, each carrying a status, so apply traverses and re-runs uniformly and
+// the hand-edited plan file has a single shape. (MatchStrategy — AmountAndDate, VisionOcr — arrives
+// with receipt matching at M2/M3.)
 case class Plan(items: List[PlanItem])
 
-enum PlanItem:
-  case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef], status: PlanItemStatus)
-  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, status: PlanItemStatus)
-  case Skipped(ref: ExternalRef, reason: String, matched: ExpenseId)
+case class PlanItem(action: PlanAction, status: PlanItemStatus)
+
+enum PlanAction:
+  case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])
+  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef)
+  case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
 
 object ExpensePlanner:
