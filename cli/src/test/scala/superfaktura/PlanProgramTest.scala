@@ -14,14 +14,14 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
   private def debit(amount: String, recipientInfo: Option[String], description: String): Transaction =
     Transaction(
-      date,
-      Money(BigDecimal(amount), "EUR"),
-      TransactionType.Debit,
-      None,
-      None,
-      None,
-      recipientInfo,
-      description
+      date = date,
+      amount = Money(BigDecimal(amount), "EUR"),
+      direction = TransactionType.Debit,
+      counterpartyIban = None,
+      variableSymbol = None,
+      specificSymbol = None,
+      recipientInfo = recipientInfo,
+      description = description
     )
 
   "PlanProgram.run plans fresh candidates as creates and ref-matched existing expenses as skips" in {
@@ -33,16 +33,17 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO]:
       override def read(path: Path): IO[List[Transaction]] = IO.pure(transactions)
+    val queried = Ref.unsafe[IO, Option[DateWindow]](None)
     given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO]:
       override def listExpenses(window: DateWindow): IO[List[Expense]] =
-        IO.pure(
+        queried.set(Some(window)).as(
           List(
             Expense(
-              ExpenseId(9),
-              "SHELL",
-              Money(BigDecimal("73.71"), "EUR"),
-              date,
-              Some(ExpensePlanner.refMarker(shellRef))
+              id = ExpenseId(9),
+              name = "SHELL",
+              amount = Money(BigDecimal("73.71"), "EUR"),
+              created = date,
+              comment = Some(ExpensePlanner.refMarker(shellRef))
             )
           )
         )
@@ -54,6 +55,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     PlanProgram.run[IO](Paths.get("ignored.csv")).unsafeRunSync()
 
+    queried.get.unsafeRunSync() shouldBe Some(DateWindow(date, date))
     val plan = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved"))
     plan.items.collect {
       case PlanItem(PlanAction.CreateExpense(_, candidate, _), PlanItemStatus.Pending) => candidate.name
@@ -61,5 +63,21 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
     plan.items.collect {
       case PlanItem(PlanAction.SkipDuplicate(_, _, matched), PlanItemStatus.Skipped) => matched
     } shouldBe List(ExpenseId(9))
+  }
+
+  "PlanProgram.run skips the listing entirely and saves an empty plan when there are no debits" in {
+    given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO]:
+      override def read(path: Path): IO[List[Transaction]] = IO.pure(Nil)
+    // listExpenses is left unimplemented (???): the test fails if the program lists for an empty CSV.
+    given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO] {}
+    val saved = Ref.unsafe[IO, Option[Plan]](None)
+    given PlanStore[IO] = new PlanStoreStub[IO]:
+      override def save(plan: Plan): IO[Unit] = saved.set(Some(plan))
+    given ReporterAlgebra[IO] = new ReporterAlgebraStub[IO]:
+      override def summary(plan: Plan): IO[Unit] = IO.unit
+
+    PlanProgram.run[IO](Paths.get("ignored.csv")).unsafeRunSync()
+
+    saved.get.unsafeRunSync() shouldBe Some(Plan(Nil))
   }
 end PlanProgramTest
