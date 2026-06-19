@@ -1,10 +1,11 @@
 package superfaktura.cli
 
 import cats.effect.Sync
+import cats.syntax.all.*
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.{ImageWriter, JpegWriter, PngWriter}
 import scodec.bits.ByteVector
-import superfaktura.{AttachmentFormat, ImagePrepAlgebra, PreparedAttachment, ReceiptBytes}
+import superfaktura.{AttachmentFormat, CliError, ImagePrepAlgebra, PreparedAttachment, ReceiptBytes}
 
 import scala.annotation.tailrec
 
@@ -24,12 +25,14 @@ object ScrimageImagePrep:
             Sync[F].pure(PreparedAttachment.TooLarge(s"$format over $maxBytes bytes cannot be downscaled"))
 
     private def downscale(attachment: ReceiptBytes, writer: ImageWriter): F[PreparedAttachment] =
-      Sync[F].blocking(shrink(ImmutableImage.loader().fromBytes(attachment.value.toArray), writer, maxBytes))
+      Sync[F]
+        .blocking(shrink(ImmutableImage.loader().fromBytes(attachment.value.toArray), writer, maxBytes))
+        .adaptError { case error: Exception => CliError.ImageInvalid(error.getMessage) }
 
   @tailrec
   private def shrink(image: ImmutableImage, writer: ImageWriter, maxBytes: Long): PreparedAttachment =
     val encoded = image.bytes(writer)
     if encoded.length <= maxBytes then PreparedAttachment.Fitted(ReceiptBytes(ByteVector(encoded)))
     else if image.width <= minDimension || image.height <= minDimension then
-      PreparedAttachment.TooLarge(s"could not downscale below $maxBytes bytes")
+      PreparedAttachment.TooLarge(s"still over $maxBytes bytes after downscaling")
     else shrink(image.scale(scaleStep), writer, maxBytes)

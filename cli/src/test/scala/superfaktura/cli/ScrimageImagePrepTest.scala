@@ -2,10 +2,11 @@ package superfaktura.cli
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import com.sksamuel.scrimage.ImmutableImage
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
-import superfaktura.{AttachmentFormat, PreparedAttachment, ReceiptBytes}
+import superfaktura.{AttachmentFormat, CliError, PreparedAttachment, ReceiptBytes}
 
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -28,6 +29,19 @@ class ScrimageImagePrepTest extends AnyFreeSpec with Matchers:
         PreparedAttachment.Fitted(small)
     }
 
+    "treats an attachment exactly at the limit as fitting" in {
+      val exact = ReceiptBytes(ByteVector(1, 2, 3))
+      ScrimageImagePrep.fitting[IO](maxBytes = 3).fit(exact, AttachmentFormat.Png).unsafeRunSync() shouldBe
+        PreparedAttachment.Fitted(exact)
+    }
+
+    "maps an undecodable image to CliError.ImageInvalid" in {
+      val garbage = ReceiptBytes(ByteVector("this is not an image".getBytes))
+      ScrimageImagePrep.fitting[IO](maxBytes = 2).fit(garbage, AttachmentFormat.Jpeg).attempt.unsafeRunSync() match
+        case Left(_: CliError.ImageInvalid) => succeed
+        case other => fail(s"expected CliError.ImageInvalid, got: $other")
+    }
+
     "flags an oversized PDF as too large rather than downscaling it" in {
       val pdf = ReceiptBytes(ByteVector(1, 2, 3, 4))
       ScrimageImagePrep.fitting[IO](maxBytes = 2).fit(pdf, AttachmentFormat.Pdf).unsafeRunSync() match
@@ -47,7 +61,9 @@ class ScrimageImagePrepTest extends AnyFreeSpec with Matchers:
       val limit = 50L * 1024
       original.value.size should be > limit
       ScrimageImagePrep.fitting[IO](limit).fit(original, AttachmentFormat.Png).unsafeRunSync() match
-        case PreparedAttachment.Fitted(fitted) => fitted.value.size should be <= limit
+        case PreparedAttachment.Fitted(fitted) =>
+          fitted.value.size should be <= limit
+          noException should be thrownBy ImmutableImage.loader().fromBytes(fitted.value.toArray)
         case other => fail(s"expected Fitted, got: $other")
     }
 
