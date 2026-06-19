@@ -18,12 +18,8 @@ object PlanProgram:
       candidates = ExpensePlanner.toCandidates(transactions)
       existing <-
         if candidates.isEmpty then List.empty[Expense].pure[F]
-        else superfaktura.listExpenses(windowOf(candidates))
+        else superfaktura.listExpenses(ExpensePlanner.windowOf(candidates))
       plan = ExpensePlanner.buildPlan(ExpensePlanner.triage(candidates, existing))
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
-
-  private def windowOf(candidates: List[CandidateExpense]): DateWindow =
-    val dates = candidates.map(_.occurredOn)
-    DateWindow(dates.minBy(_.toEpochDay), dates.maxBy(_.toEpochDay))

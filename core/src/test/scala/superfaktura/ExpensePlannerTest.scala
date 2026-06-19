@@ -120,17 +120,17 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       val shellRef = candidates.find(_.name == "SHELL 8203").get.externalRef
       val existing = List(
         Expense(
-          ExpenseId(9),
-          "SHELL",
-          Money(BigDecimal("73.71"), "EUR"),
-          date,
-          Some(ExpensePlanner.refMarker(shellRef))
+          id = ExpenseId(9),
+          name = "SHELL",
+          amount = Money(BigDecimal("73.71"), "EUR"),
+          created = date,
+          comment = Some(ExpensePlanner.refMarker(shellRef))
         )
       )
 
       val result = ExpensePlanner.triage(candidates, existing)
       result.toCreate.map(_.name) shouldBe List("UHRADA POISTNEHO")
-      result.duplicates.map(_.existing) shouldBe List(ExpenseId(9))
+      result.duplicates.map(_.existingId) shouldBe List(ExpenseId(9))
       result.duplicates.map(_.candidate.name) shouldBe List("SHELL 8203")
     }
 
@@ -138,11 +138,31 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       val candidates = ExpensePlanner.toCandidates(
         List(tx(direction = TransactionType.Debit, amount = "45.45", recipientInfo = None, description = "x"))
       )
-      val existing = List(Expense(ExpenseId(1), "x", Money(BigDecimal("45.45"), "EUR"), date, Some("unrelated")))
+      val existing = List(
+        Expense(
+          id = ExpenseId(1),
+          name = "x",
+          amount = Money(BigDecimal("45.45"), "EUR"),
+          created = date,
+          comment = Some("unrelated")
+        )
+      )
 
       val result = ExpensePlanner.triage(candidates, existing)
       result.toCreate should have size 1
       result.duplicates shouldBe empty
+    }
+  }
+
+  "windowOf" - {
+    "spans the earliest and latest candidate dates" in {
+      val candidates = List(
+        CandidateExpense(ExternalRef("a"), "A", Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
+        CandidateExpense(ExternalRef("b"), "B", Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 2)),
+        CandidateExpense(ExternalRef("c"), "C", Money(BigDecimal("3.00"), "EUR"), LocalDate.of(2026, 6, 20))
+      )
+
+      ExpensePlanner.windowOf(candidates) shouldBe DateWindow(LocalDate.of(2026, 6, 2), LocalDate.of(2026, 6, 20))
     }
   }
 

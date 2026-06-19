@@ -27,12 +27,17 @@ object ExpensePlanner:
       PlanItem(PlanAction.CreateExpense(candidate.externalRef, candidate, None), PlanItemStatus.Pending)
     val skips = triage.duplicates.map: duplicate =>
       PlanItem(
-        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existing),
+        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
         PlanItemStatus.Skipped
       )
     Plan(creates ++ skips)
 
-  // Stamp the external ref into the expense comment so a re-run recognises what this tool already booked.
+  def windowOf(candidates: List[CandidateExpense]): DateWindow =
+    val dates = candidates.map(_.occurredOn)
+    DateWindow(dates.minBy(_.toEpochDay), dates.maxBy(_.toEpochDay))
+
+  // Superfaktura has no custom-metadata field, so the human-visible comment is the only place
+  // to persist a machine-readable ref for de-duplicating on re-runs.
   def refMarker(ref: ExternalRef): String = s"sfref:${ref.value}"
 
   def newExpense(ref: ExternalRef, candidate: CandidateExpense): NewExpense =
@@ -45,7 +50,7 @@ object ExpensePlanner:
     )
 
   private def matchesRef(candidate: CandidateExpense, expense: Expense): Boolean =
-    expense.comment.exists(_.contains(candidate.externalRef.value))
+    expense.comment.exists(_.contains(refMarker(candidate.externalRef)))
 
   def render(plan: Plan): String =
     val header = s"Plan: ${plan.items.size} item(s)"
