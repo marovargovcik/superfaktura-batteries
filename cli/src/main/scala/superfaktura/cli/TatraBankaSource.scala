@@ -1,33 +1,33 @@
 package superfaktura.cli
 
-import cats.effect.Sync
+import cats.ApplicativeThrow
+import cats.effect.Async
 import cats.syntax.all.*
-import fs2.Stream
 import fs2.data.csv.{CsvRow, lowlevel}
+import fs2.io.file.{Files, Path as FsPath}
+import fs2.text
 import superfaktura.{BankStatementSourceAlgebra, CliError, TatraBankaCsv, Transaction}
 
+import java.io.IOException
 import java.nio.charset.Charset
-import java.nio.file.{Files, Path}
+import java.nio.file.Path
 
 object TatraBankaSource:
 
   private val windows1250 = Charset.forName("windows-1250")
 
-  given live[F[_]: Sync]: BankStatementSourceAlgebra[F] with
+  given live[F[_]: Async]: BankStatementSourceAlgebra[F] with
     def read(path: Path): F[List[Transaction]] =
-      Sync[F].blocking(String(Files.readAllBytes(path), windows1250)).flatMap(parse[F])
+      Files
+        .forAsync[F]
+        .readAll(FsPath.fromNioPath(path))
+        .through(text.decodeWithCharset(windows1250))
+        .through(lowlevel.rows[F, String]())
+        .through(lowlevel.headers[F, String])
+        .evalMap(toTransaction[F])
+        .compile
+        .toList
+        .adaptError { case error: IOException => CliError.FileUnreadable(error.getMessage) }
 
-  private def parse[F[_]: Sync](content: String): F[List[Transaction]] =
-    Stream
-      .emit(content)
-      .covary[F]
-      .through(lowlevel.rows[F, String]())
-      .through(lowlevel.headers[F, String])
-      .evalMap(toTransaction[F])
-      .compile
-      .toList
-
-  private def toTransaction[F[_]: Sync](row: CsvRow[String]): F[Transaction] =
-    TatraBankaCsv.parseRow(row.toMap) match
-      case Right(transaction) => transaction.pure[F]
-      case Left(error)        => Sync[F].raiseError(CliError.CsvInvalid(error))
+  private def toTransaction[F[_]: ApplicativeThrow](row: CsvRow[String]): F[Transaction] =
+    TatraBankaCsv.parseRow(row.toMap).leftMap[Throwable](CliError.CsvInvalid(_)).liftTo[F]
