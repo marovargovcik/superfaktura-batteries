@@ -1,0 +1,613 @@
+---
+title: superfaktura CLI — Project Design Requirements
+icon: 🧾
+---
+
+# superfaktura CLI — Project Design Requirements
+
+> [!NOTE]
+> Status: Draft v3 (Scala) · Author: mvk@famly.co · Date: 2026-06-19.
+> Supersedes the earlier TypeScript/Effect-TS draft. The stack is now Scala 3 + cats-effect, per the conventions in
+> [`CLAUDE.md`](../CLAUDE.md) and [`REVIEW.md`](../REVIEW.md).
+
+## Summary
+
+A command-line tool that automates business bookkeeping against the
+[Superfaktura.sk](https://www.superfaktura.sk) API ([docs](https://github.com/superfaktura/docs)). It:
+
+- **Creates expenses** in Superfaktura from a Tatra banka transaction-export CSV.
+- **Attaches receipts/invoices** (PDF / JPG / PNG / HEIC) from a local folder to the correct expenses — newly created
+  ones or ones that already exist in Superfaktura.
+- Operates **plan-first**: it analyses inputs and emits exactly what it will do (how many expenses, names/amounts,
+  which files attach where, which look like duplicates); the user reviews/edits; only then does it mutate anything.
+
+The two capabilities compose. Because the Superfaktura API carries the attachment **inside** the expense-create call
+(see [Attachments](#attachments-base64-inside-the-expense-call)), "create expense and attach its receipt" is a single
+operation. They also run independently: expenses from a CSV with no receipts folder; or attaching receipts to
+pre-existing expenses with no CSV.
+
+## Design principles (load-bearing)
+
+These derive directly from [`CLAUDE.md`](../CLAUDE.md) and constrain every later section.
+
+- **Pure functions first.** All business logic — parsing rows into candidates, duplicate detection, the
+  receipt-matching cascade, building the plan — is expressed as pure, total functions over immutable `case class` /
+  `enum` data. No side effects, no clock, no randomness, no throwing in the core.
+- **All side effects live in `F[_]`.** Effectful work (reading files, HTTP, writing the plan, prompting the user) is
+  never performed outside an effect. The concrete effect (`IO`) appears only at the entry point.
+- **Tagless final for every effectful dependency.** Each external concern is a `trait Algebra[F[_]]` with
+  companion-object constructors. Collaborators are passed via `using` clauses (`given` instances), not threaded through
+  method signatures. New abstractions are `F[_]`-polymorphic.
+- **Errors via `MonadThrow` / `ApplicativeThrow`.** Domain failures are a single small `enum CliError extends
+  Exception` (e.g. `ConfigInvalid`, `Api(status, body)`, `PlanInvalid`), raised through the error type classes; values
+  are extracted from `F[Option]`/`F[Either]` with cats stdlib (`.liftTo`, `OptionT`), not a bespoke syntax layer. Error
+  combinators are ordered extraction → retry → recovery. The pure core never throws — it returns data.
+- **Validate only at boundaries.** Untrusted input (CSV, API JSON, the edited plan file) is decoded with Circe at the
+  edge into trusted domain types. The core trusts its inputs and does not re-validate.
+- **Config at the entry point only.** Configuration is HOCON (`*.conf`) loaded once in `Main` via pureconfig, never
+  inside library code.
+- **Simplicity first.** Implement what is asked; no speculative configurability. The one configurable axis that is an
+  explicit requirement is correction (file vs terminal); file-mode needs no abstraction (it is the plain
+  `plan` → edit → `apply` split), so `CorrectionStrategyAlgebra` is introduced only when the TUI lands (M4).
+
+## Goals & non-goals
+
+### Goals
+
+- Turn a Tatra banka CSV into correctly-described Superfaktura expenses with minimal manual entry.
+- Pair physical receipts/invoices to expenses reliably and attach them (a legal bookkeeping requirement).
+- Never surprise the user: a reviewable, **editable plan** precedes every write.
+- Idempotent: detect expenses that already exist; safe to re-run.
+
+### Non-goals (initial release)
+
+- Issuing *invoices* (income) — only **expenses** (outflows).
+- A GUI or long-running service. CLI only.
+- A VAT/tax categorisation rules engine (sensible defaults + manual override via the plan file).
+- Banks other than Tatra banka. The parser sits behind an algebra so other banks can be added later, but only Tatra
+  banka ships first.
+
+## Users & use cases
+
+Single user: the business owner doing their own bookkeeping.
+
+| # | Command | Outcome |
+|---|---------|---------|
+| A | `plan --csv statement.csv --receipts ./receipts` | Dry-run plan: expenses, receipt pairings, duplicates. |
+| B | `apply --plan plan.json` | Executes a reviewed (and possibly hand-edited) plan. |
+| C | `plan --csv statement.csv` | Expenses only, no attachment pairing. |
+| D | `plan --receipts ./receipts` | Attach receipts to **existing** Superfaktura expenses only. |
+
+Input paths are always supplied explicitly as CLI flags (`--csv`, `--receipts`) — there is no env/config default for
+them. At least one of `--csv` / `--receipts` must be given.
+
+## The Superfaktura API (verified against the docs)
+
+Base URL from config (`SUPERFAKTURA_API_URL`, e.g. `https://moja.superfaktura.sk`; a **sandbox** is available at
+`https://sandbox.superfaktura.sk` for safe testing — selected purely by config).
+
+### Authentication
+
+Custom header scheme (not Bearer/Basic). All values **URL-encoded**:
+
+```text
+Authorization: SFAPI email=<urlenc-email>&apikey=<key>&company_id=<id>&module=<name>
+```
+
+- `email`, `apikey`, `company_id` come from env, loaded once at the entry point and never logged.
+- `module` is a free-form client identifier we choose (e.g. `superfaktura-cli 1.0`). The docs mark it required but the
+  examples omit it; we send it to be safe.
+
+> [!WARNING]
+> Un-encoded `@`/`+` in the email is the #1 documented cause of auth failures.
+
+### Request body format
+
+We use `Content-Type: application/json` with a raw JSON body. The legacy alternative (a `data=<url-encoded JSON>` form
+field) is error-prone — an un-encoded `&` corrupts the payload, and it is especially fragile with base64 attachments.
+
+### Create expense — `POST /expenses/add`
+
+Top-level JSON keys: `Expense` (required), optional `Client`, `ExpenseItem[]`, `ExpenseExtra`, `Tag`. Only
+`Expense.name` is strictly required. Fields we map from a bank transaction (`version: "basic"`):
+
+| API field | Source | Notes |
+|-----------|--------|-------|
+| `name` | derived vendor/description | e.g. `SHELL 8203`, `CLAUDE.AI SUBSCRIPTION`, or counterparty. |
+| `amount` | CSV `Suma` (gross) | total incl. VAT is recorded as-is; with `vat: 0` the API total equals the gross. |
+| `vat` | always `0` | user records only the total-incl.-VAT; no net/VAT split is tracked (see note below). |
+| `currency` | CSV `Mena` | ISO-4217, e.g. `EUR`. |
+| `created` | CSV date | `YYYY-MM-DD`. |
+| `variable` | CSV `Variabilný symbol` | when present. |
+| `constant`/`specific` | CSV `Konštantný`/`Špecifický` | when present. |
+| `document_number` | OCR / manual | supplier's invoice number when known. |
+| `comment` | tool-stamped external ref + ref | basis for dedup (see [Dedup](#duplicate-detection--idempotency)). |
+| `type` | always `invoice` | API default; no category set (re-categorise in the SF UI if ever needed). |
+| `already_paid` | `1` | a bank statement line is already paid. |
+| `attachment` | base64 of receipt | see below. |
+
+> [!NOTE]
+> **VAT — total-only, no split.** The API's `amount` is the *net* (pre-VAT) figure and `total = amount × (1 + vat/100)`.
+> The user does not track a net/VAT breakdown — only the single total-incl.-VAT debited by the bank. We therefore send
+> the bank gross as `amount` with `vat = 0`, so the recorded total matches the bank exactly. Worked example: a €73.71
+> Shell fuel debit is sent as `amount = 73.71, vat = 0` → total €73.71. (Putting `vat = 23` here would wrongly inflate
+> the total to €90.66.) The expense simply shows a 0% rate, which is the breakdown the user already doesn't track.
+
+Response: `{ data: { Expense: { id, ... } }, error, error_message, status }`. New id = `data.Expense.id`.
+
+> [!WARNING]
+> Error handling must be defensive: `error_message` is sometimes a string, sometimes a field→messages object; success
+> is signalled by `error: 0` and/or `status: 1`; messages are localized (SK/CZ/EN) so we must **not** match on message
+> text. The Circe `Decoder` accommodates both shapes.
+
+### Attachments (base64 inside the expense call)
+
+`Expense.attachment` is a **base64-encoded file** sent in the same `/expenses/add` or `/expenses/edit` body — there is
+**no separate upload endpoint**. Constraints from the docs:
+
+- **Max 4 MB** per file. Allowed: `jpg, jpeg, png, tif, tiff, gif, pdf, heic, …`. Our scope: pdf, jpg/jpeg, png, heic.
+- The documented schema exposes **one** `attachment` per call; multiple attachments per request is not documented.
+- **Read-back gap:** the `attachments[]` array shape after upload is not documented, so we cannot reliably learn an
+  attachment's id from the API. Attachment idempotency therefore rests on the **persisted plan** (see below), not on
+  any API read-back.
+
+Therefore:
+
+- **Create + attach** = one `POST /expenses/add` with `attachment`.
+- **Attach to existing** = `POST /expenses/edit` with the expense `id` + `attachment`.
+
+### List/search expenses (for dedup) — `GET /expenses/index.json/...`
+
+Filters are colon-separated **path segments**, not a query string. For dedup we window by date:
+
+```text
+/expenses/index.json/created:3/created_since:YYYY-MM-DD/created_to:YYYY-MM-DD/per_page:100/page:N/listinfo:1
+```
+
+- `created:3` selects the "since–to" range mode.
+- `per_page` max **100** → paginate using `listinfo:1` metadata (`itemCount`, `pageCount`, `page`, `perPage`).
+
+### Operational limits
+
+- Rate limit: **1000 req/day, 30 000/month**; remaining exposed via `X-RateLimit-*` response headers.
+- Transient failures (5xx, connection reset/refused, timeouts) are retried with exponential backoff via the **http4s
+  `Retry` client middleware**, applied once at the client layer. A single failed item marks that plan item failed and
+  does not abort the batch. Our batch sizes (tens of expenses) sit well within limits, so the `apply` step traverses
+  **sequentially** for simplicity; bounded parallelism (`parTraverseN`) is a later option if needed.
+
+## Bank CSV ingestion (Tatra banka) — verified against a real export
+
+- **Encoding:** Windows-1250 (CP1250) — decode to UTF-8 on read (fs2 byte stream + charset decode).
+- **Delimiter:** `,`; fields quoted as needed. **Amount:** quoted, comma decimal. **Dates:** `DD.MM.YYYY`.
+
+15 columns: `Dátum spracovania`, `Dátum zúčtovania`, `Suma`, `Mena`, `Typ`, `Predčíslie`, `Číslo účtu`,
+`Kód banky`, `IBAN`, `Variabilný symbol`, `Špecifický symbol`, `Konštantný symbol`, `Referencia platiteľa`,
+`Informácia pre príjemcu`, `Popis`.
+
+Parsing rules:
+
+- **Sign:** `Suma` is always positive; direction is in `Typ`. `Debet` → expense candidate; `Kredit` → ignored.
+- **Amount:** strip quotes, comma→dot (`"7850,00"` → `7850.00`). Guard against a thousands separator (not seen in
+  the sample — fail loudly if encountered).
+- **Date:** primary = `Dátum spracovania`. For card payments, prefer the **real purchase timestamp embedded in
+  `Informácia pre príjemcu`** when matching receipts.
+- **Vendor / name derivation:**
+  - **Card POS rows** (`Popis` = `GP NÁKUP POS` / `INT NÁKUP POS`): `Informácia pre príjemcu` packs masked-PAN,
+    city, cardholder, `YYYYMMDD`, `HH:MM:SS`, amount+currency, and merchant + terminal, e.g.
+    `423473******7299 BRATISLAVSKA MAREK VARGOVČÍK 20260613 16:13:59 73.71EUR SHELL 8203`. Extract the merchant
+    (`SHELL`, `ANTHROPIC.COM`/`CLAUDE.AI`) for the name and the embedded datetime for matching.
+  - **Bank transfers** (insurance `UHRADA POISTNEHO`, supplier payments): use counterparty IBAN + info/description for
+    the name; VS/SS/KS are populated.
+  - **Bank-internal fees/taxes** (`Transakčná daň`, `Poplatok za balík`): valid expenses but never have a
+    receipt — classified `NoReceiptExpected` so they are excluded from unmatched-receipt noise. (This is an
+    internal matching classification only; the SF `type` is still `invoice`.)
+
+> [!NOTE]
+> The parser is one interpreter of `BankStatementSourceAlgebra[F]`; format quirks are isolated there. A second bank
+> is a second interpreter, no core change.
+
+## Duplicate detection & idempotency
+
+Two independent mechanisms, combined:
+
+- **Deterministic external reference.** Compute a stable key from the transaction (hash of
+  `date + amount + VS + counterparty + raw description`) and stamp it into the expense `comment`. Later runs recognise
+  "this exact transaction was already booked by this tool" with certainty.
+- **Fuzzy duplicate detection** against expenses pulled from the API, windowed by the CSV date range, matching on
+  **amount + date + name** (fuzzy on name, exact-ish on amount, date within a small window). This catches expenses
+  entered by other means (e.g. manually in the web app).
+
+Duplicates are **reported and skipped by default**; the plan shows *why* each was judged a duplicate so the user can
+override (un-skip) in the plan file.
+
+> [!WARNING]
+> Because the API gives no reliable attachment-id read-back, attachment idempotency rests on **the persisted plan as
+> the single source of truth**: each `PlanItem` carries a status, `apply` writes it back after each action, and re-runs
+> skip items already `Applied`. No separate ledger is kept — it would be a second source of truth for the same fact.
+> The residual gap — discarding the plan and re-deriving an attach-only run — cannot be closed via the API anyway, and
+> is accepted as a documented limitation.
+
+## Functional requirements (behaviour)
+
+### Receipt/invoice pairing — confidence cascade
+
+A receipt file is matched to a candidate/existing expense by a cascade of strategies, **highest confidence first**;
+the first confident match wins; the chosen strategy and a confidence score are recorded in the plan. Filenames are
+**not** used — receipts are not assumed to follow any naming convention.
+
+- **Vision OCR** (M3, highest confidence) — a cloud vision/LLM model reads amount / date / vendor / IČO from the
+  PDF/image and matches against expense fields.
+- **Amount + date heuristic** (M2, the workhorse) — match by amount within a date proximity window. For card POS, the
+  window is anchored on the embedded purchase datetime, not the booking date.
+
+At M2 (before OCR) matching is amount+date only, so two receipts with the same amount in the same window are an
+expected ambiguity → surfaced as `NeedsResolution` (below), not guessed.
+
+Rules:
+
+- Each receipt yields: matched expense (or `None`), matching strategy, confidence.
+- **Ambiguity** (one receipt → several candidates, or vice-versa) is surfaced as a **conflict** in the plan for the
+  user to resolve — never silently guessed.
+- Unmatched receipts and unmatched expenses are both listed explicitly.
+- Expenses classified as "no receipt expected" (bank fees) are excluded from unmatched-expense noise.
+
+### Plan-first / dry-run (core UX)
+
+- `plan` runs the entire pure pipeline (parse → dedup → pairing) and emits a human-readable summary plus an editable
+  plan (the canonical JSON state).
+- `apply` makes **no decisions** — it executes the plan verbatim. What you reviewed is exactly what runs.
+
+### Manual correction — file-mode is the plan/apply split; TUI is a later algebra
+
+- **File mode (default, MVP) needs no abstraction.** `plan` writes the plan as Circe-encoded JSON; the user edits names,
+  amounts, the matched receipt path, the skip flag, or resolves `NeedsResolution` items in their editor; `apply`
+  re-decodes and validates (schema + referential integrity: referenced files exist, amounts parse) before executing.
+  Git-friendly, scriptable. This is just the two-command workflow — no `CorrectionStrategyAlgebra` trait is needed
+  for it.
+- **Terminal mode (M4)** introduces `CorrectionStrategyAlgebra[F]` with an interactive TUI interpreter over the
+  **same** plan model (select a row, edit inline, then apply in one session). The abstraction is added when the second
+  implementation exists — not before.
+
+### Attachment handling
+
+- Match types: pdf, jpg/jpeg, png, heic.
+- **Enforce the 4 MB API limit before upload, auto-downscaling oversized raster images** (jpg/jpeg/png) via an
+  `ImagePrepAlgebra[F]` edge interpreter (scrimage) until they fit. PDFs and **HEIC over 4 MB are flagged in the
+  plan**, not downscaled — the JVM can't natively decode HEIC, and re-rendering a PDF is out of scope. HEIC under 4 MB
+  uploads
+  as-is. The resize is a side-effecting edge step; the pure core is untouched.
+- Skip if the plan item's status is already `Applied`.
+
+### Idempotency & safety
+
+- Each plan item carries a status (`Pending` / `Applied` / `Skipped` / `Failed`); re-running `apply` completes only
+  outstanding items.
+- `apply --dry-run` is a final no-op rehearsal that prints intended calls.
+
+## Architecture (Scala 3, tagless final)
+
+### Stack
+
+- **Language/runtime:** Scala 3 on the JVM. **Effect system:** cats-effect (`IO` at the edge, `F[_]` everywhere else).
+- **Build:** sbt 2.0. **Testing:** ScalaTest `AnyFreeSpec`, with `*Stub` algebras (no mocking library — see
+  [Testing](#testing-strategy)).
+- **Config:** HOCON `*.conf` + pureconfig; secrets injected via env interpolation (`${?ENV_VAR}`).
+- **Formatting/linting:** scalafmt (Scala 3 dialect) + compiler `-Werror -Wunused`; both enforced (see
+  [Tooling](#tooling-formatting--linting)).
+- **HTTP:** http4s Ember `Client[F]` (acquired as a `Resource`), http4s-circe entity codecs.
+- **JSON:** Circe (`semiauto` codecs in companion objects; no `generic.auto`).
+- **CSV:** `fs2-data-csv` over an fs2 byte stream decoded from CP1250.
+- **Images:** scrimage for downscaling oversized jpg/png attachments to the 4 MB limit.
+- **OCR (M3):** a cloud vision/LLM model reads receipts; adds its own API key/cost (separate config section) and sends
+  images off-machine. Behind `OcrAlgebra[F]`, so M0–M2 ship without it.
+- **CLI:** `decline` + `decline-effect` (`Command`/`Opts`, `CommandIOApp`).
+
+### Naming & layering conventions
+
+Vocabulary follows the Baeldung tagless-final article and the author's workplace convention:
+
+- **Algebra** — the *interface*: a `trait …[F[_]]` abstracting a side-effecting external dependency. Named with the
+  **`Algebra` suffix** (`SuperfakturaAlgebra[F]`, `OcrAlgebra[F]`, …).
+- **Store** — a specialisation of Algebra that reads/persists the application's **own** data over some storage
+  (DB, files, …). Named with the **`Store` suffix** (`PlanStore[F]`, which round-trips the plan JSON on the
+  filesystem). (DB-specific conventions like a `Tx` on writes don't apply to a file store.)
+- **Interpreter** — an *implementation* of an algebra/store. The default (live) one is a `given` in the companion,
+  named descriptively (`live`, `file`, `tatraBanka`, `scrimage`, `console`); test interpreters are the `…Stub`s.
+- **Program** — *not* an algebra: effect-polymorphic business logic that composes algebras (and other programs). Named
+  with the **`Program` suffix** (`PlanProgram`, `ApplyProgram`).
+
+Rules:
+
+- **Introduce an Algebra/Store only** when you'd plausibly swap the implementation (e.g. for tests) or it touches a
+  stateful resource (HTTP client, filesystem). Otherwise it's a Program or a plain pure function.
+- **Direction is one-way: Programs call Algebras/Stores; these never call Programs.** Programs may compose Programs.
+- **Algebras are not type classes.** Pass them via `using` parameters — never as context bounds (`[F[_]: SomeAlgebra]`)
+  or with `apply` summoners. That distinction is deliberate.
+- **`Store` is only for the app's own data; external services are Algebras — even when they write.**
+  `SuperfakturaAlgebra` creates/edits expenses but is **not** a Store, because that data lives in a third-party
+  system. `BankStatementSourceAlgebra`/`ReceiptSourceAlgebra` read external inputs. Only `PlanStore` — our own plan —
+  is a Store.
+
+### Algebras & stores (tagless final) and their interpreters
+
+Each is a `trait …[F[_]]` whose companion provides the **default (live) interpreter as a `given`**, plus a `…Stub`
+(trait name + `Stub`) for tests (see [Testing](#testing-strategy)).
+
+| Algebra / Store (`trait …[F[_]]`) | Responsibility (edge) | Live interpreter (`given`) |
+|-----------------------------------|-----------------------|----------------------------|
+| `BankStatementSourceAlgebra[F]` | decode CSV → `List[Transaction]` | `tatraBanka` (CP1250) |
+| `ReceiptSourceAlgebra[F]` | enumerate + read receipt files | `fileSystem` |
+| `SuperfakturaAlgebra[F]` | list / create / edit expenses (HTTP) | `live` (http4s, prod/sandbox by URL) |
+| `PlanStore[F]` | persist/load plan (JSON, status incl.) | `file` |
+| `ImagePrepAlgebra[F]` | downscale oversized jpg/png to ≤4 MB | `scrimage` |
+| `ReporterAlgebra[F]` | render human summary | `console` |
+| `OcrAlgebra[F]` (M3) | read amount/date/vendor from receipt | cloud vision/LLM |
+| `CorrectionStrategyAlgebra[F]` (M4) | interactive correction (TUI) | `InteractiveTui` (when TUI lands) |
+
+Each also ships a `…Stub` test interpreter (e.g. `SuperfakturaAlgebraStub`, `PlanStoreStub`; every method `= ???`);
+see [Testing](#testing-strategy).
+
+Idiomatic shape — the live interpreter is a **conditional `given`** in the companion (`using` its collaborators), so it
+is found automatically in implicit scope; an alternative is bound by defining a local `given`/`implicit val` (see
+[Programs & wiring](#programs--wiring)):
+
+```scala
+trait SuperfakturaAlgebra[F[_]]:
+  def listExpenses(window: DateWindow): F[List[Expense]]
+  def addExpense(request: NewExpense): F[ExpenseId]
+  def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit]
+
+object SuperfakturaAlgebra:
+  given live[F[_]: Concurrent](using client: Client[F], config: AppConfig): SuperfakturaAlgebra[F] =
+    new SuperfakturaAlgebra[F]:
+      override def listExpenses(window: DateWindow): F[List[Expense]] = ???
+      override def addExpense(request: NewExpense): F[ExpenseId]      = ???
+      override def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit] = ???
+```
+
+### Pure core (no `F[_]`)
+
+The core is plain functions over immutable data, modelled with `enum` ADTs — unit-tested with no interpreters at all.
+
+```scala
+enum TransactionType:
+  case Debit, Credit
+
+enum MatchStrategy:
+  case AmountAndDate, VisionOcr
+
+enum PlanItemStatus:
+  case Pending, Applied, Skipped, Failed
+
+// One uniform list of items; conflicts/unmatched are items with a NeedsResolution status, so the
+// hand-edited plan file has a single shape to read and traverse.
+case class Plan(items: List[PlanItem])
+
+enum PlanItem:
+  case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef], status: PlanItemStatus)
+  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, status: PlanItemStatus)
+  case Skipped(ref: ExternalRef, reason: String, matched: ExpenseId)
+  case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
+
+object ExpensePlanner:
+  def toCandidates(transactions: List[Transaction], config: MappingConfig): List[CandidateExpense]     = ???
+  def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage                       = ???
+  def matchReceipts(targets: List[ReceiptTarget], receipts: List[ReceiptFile], config: MatchConfig): Matching = ???
+  def buildPlan(triage: Triage, matching: Matching): Plan                                               = ???
+  def render(plan: Plan): String                                                                        = ???
+```
+
+### Pipeline
+
+```mermaid
+flowchart TD
+  subgraph IN[Edges: read]
+    CSV[BankStatementSourceAlgebra.readCsv]
+    REC[ReceiptSourceAlgebra.list]
+    LIST[SuperfakturaAlgebra.listExpenses]
+  end
+  subgraph CORE[Pure core - no F]
+    CAND[toCandidates]
+    DEDUP[triage]
+    MATCH[matchReceipts]
+    PLAN[buildPlan]
+  end
+  subgraph OUT[Edges: write]
+    STORE[PlanStore.save]
+    REP[ReporterAlgebra.summary]
+    EDIT[user edits JSON]
+    APPLY[apply: SuperfakturaAlgebra.add / edit + base64]
+    STATUS[PlanStore.save status]
+  end
+
+  CSV --> CAND
+  LIST --> DEDUP
+  CAND --> DEDUP
+  REC --> MATCH
+  DEDUP --> MATCH
+  MATCH --> PLAN
+  PLAN --> STORE --> REP --> EDIT --> APPLY --> STATUS
+
+  classDef core fill:#2b6cb0,stroke:#90cdf4,color:#fff;
+  class CAND,DEDUP,MATCH,PLAN core;
+```
+
+`plan` runs IN → CORE → save + report, then stops (the user edits the JSON). `apply` loads the plan, then for each
+item calls `add` (create + attach in one request) or `edit` (attach to existing), writing each item's status back via
+`PlanStore.save`; re-runs skip items already `Applied`. Side effects exist only in the named algebras.
+
+### Programs & wiring
+
+Programs are `F[_]`-polymorphic, take their algebras via `using`, and need only `MonadThrow` — library constraints
+(e.g. http4s `Concurrent`) stay inside the interpreters, never leaking into the program signature. For this
+two-command CLI a Program is a plain `object` with a `run` method; we skip the workplace's heavier
+`trait + make/apply/forFF` shape (there is no concrete-effect bridge to build and nothing to summon).
+
+```scala
+object PlanProgram:
+  def run[F[_]: MonadThrow](inputs: PlanInputs)(using
+      bank: BankStatementSourceAlgebra[F],
+      receipts: ReceiptSourceAlgebra[F],
+      sf: SuperfakturaAlgebra[F],
+      store: PlanStore[F],
+      reporter: ReporterAlgebra[F],
+  ): F[Unit] =
+    for
+      txns     <- inputs.csv.traverse(bank.read).map(_.getOrElse(Nil))
+      files    <- inputs.receipts.traverse(receipts.list).map(_.getOrElse(Nil))
+      existing <- sf.listExpenses(inputs.window)
+      plan      = ExpensePlanner.buildPlan(...)   // pure
+      _        <- store.save(plan)
+      _        <- reporter.summary(plan)
+    yield ()
+```
+
+**Resolution model — no `Wiring` bag.** Each algebra's *live* interpreter is a `given` in its companion object, so it
+sits in **implicit scope** and is picked up automatically with no import. An alternative is selected simply by bringing
+a competing `given` into **lexical scope** (`given PlanStore[IO] = PlanStore.inMemory` or
+`implicit val store = PlanStoreStub.of(...)`); lexical givens outrank companion givens, so the override wins
+**without ambiguity** — and the live one is never even constructed. This is the workplace pattern: one default that
+resolves itself, others opted into by hand.
+
+`Main` is the only `IO` site. It loads config with pureconfig, then the single `Resource` we need — the Ember client —
+is acquired; inside `use`, putting `given Client[IO]` and `given AppConfig` in scope is enough for every algebra's
+companion `given` to resolve `PlanProgram.run[IO]` by itself.
+
+```scala
+object Main extends CommandIOApp(name = "superfaktura", header = "Bookkeeping CLI for Superfaktura.sk"):
+  override def main: Opts[IO[ExitCode]] =
+    (PlanCommand.opts orElse ApplyCommand.opts).map: inputs =>
+      ConfigSource.default.loadF[IO, AppConfig].flatMap: config =>
+        given AppConfig = config
+        EmberClientBuilder.default[IO].build.use: client =>
+          given Client[IO] = client
+          PlanProgram.run[IO](inputs).as(ExitCode.Success)   // .live, .file, … resolve from companions
+```
+
+Tests need no `Resource` and no client: bringing a `given SuperfakturaAlgebraStub[IO]{ … }` into lexical scope shadows
+the companion default (which is never built because its `Client` dependency is never summoned). See
+[Testing](#testing-strategy).
+
+### Subproject layout (sbt)
+
+Two sbt subprojects in `build.sbt`:
+
+- `core` — domain `case class` / `enum`, pure functions, algebra traits + companion `given` interpreters, Circe codecs,
+  and the `*Stub` traits (under `core/src/test`). No cats-effect runtime concerns beyond the `F[_]` constraints.
+- `cli` — IO-bound interpreters (http4s, fs2, filesystem, console), pureconfig loading, `decline` commands, `Main`
+  (`CommandIOApp`); depends on `core`, and on `core % "test->test"` to reuse the stubs.
+- Tests mirror packages under each subproject's `src/test/scala` root with a `Test` suffix.
+
+### Tooling: formatting & linting
+
+Both are enforced — a clean checkout fails CI on any deviation, so the style guide is mechanical, not aspirational.
+
+- **scalafmt** (`.scalafmt.conf`, `runner.dialect = scala3`, `maxColumn = 120`) formats all sources. `sbt scalafmtAll`
+  formats; **CI runs `sbt scalafmtCheckAll`** and fails on any unformatted file. The config enables Scala 3
+  significant-indentation + new control syntax, matching the [`CLAUDE.md`](../CLAUDE.md) style preferences.
+- **Linting** is the compiler: `-Werror -Wunused:all` (plus `-Wvalue-discard`). [`CLAUDE.md`](../CLAUDE.md) already
+  mandates "all Scala warnings must be fixed"; `-Werror` makes that a build failure rather than a convention.
+- **A version-controlled `pre-commit` hook** in `.githooks/` (wired via `git config core.hooksPath .githooks`) runs
+  `scalafmt --test` on staged `*.scala` files and blocks unformatted commits. It checks formatting only — the heavier
+  `-Werror` compile stays in CI — so it stays fast.
+
+Configuration (`SUPERFAKTURA_*`) is loaded **only** here and passed down via `given` instances. Input paths
+(`--csv`, `--receipts`) are not configuration — they are CLI arguments supplied per run.
+
+## Configuration & secrets
+
+A single **committed** `application.conf` (in `cli/src/main/resources`) decoded by **pureconfig** into a typed
+`AppConfig` at the entry point — the same default-plus-env-override idiom used at the author's workplace. Each value is
+a default line immediately followed by an optional `${?ENV}` line; HOCON evaluates top-to-bottom, so a set env var
+wins and an unset one leaves the default. There is **no `.env` / `.env.example`** (that was the TypeScript-era
+mechanism) and **no separate `reference.conf`**.
+
+```hocon
+superfaktura {
+  api-url    = "https://moja.superfaktura.sk"   # https://sandbox.superfaktura.sk for testing
+  api-url    = ${?SUPERFAKTURA_API_URL}
+  email      = ""
+  email      = ${?SUPERFAKTURA_API_EMAIL}
+  api-key    = ""                               # never inline a real key — env only
+  api-key    = ${?SUPERFAKTURA_API_KEY}
+  company-id = ""
+  company-id = ${?SUPERFAKTURA_COMPANY_ID}
+  module     = "superfaktura-cli 1.0"
+}
+```
+
+- The file is safe to commit **because it contains no secret** — only defaults and `${?ENV}` references. The real
+  values are supplied by the environment at runtime (e.g. a git-ignored `.envrc` via direnv, or a shell `export`).
+- Per [`REVIEW.md`](../REVIEW.md), security is the top priority: input is validated only at boundaries (Circe decoders
+  for API + plan, the CSV parser, pureconfig for config), the api-key is confined to the entry point and the
+  `Authorization` header, and its config field is wrapped so it is redacted in any `toString`/log.
+- Pointing `superfaktura.api-url` at `https://sandbox.superfaktura.sk` (via env) switches to the **sandbox**.
+
+## Testing strategy
+
+Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the important properties; no mocking library.
+
+- **Pure core** (`ExpensePlanner`, CSV row parsing, dedup, matching cascade): unit + property tests, no interpreters.
+- **`*Stub` per algebra/store/program.** For each algebra we ship a `FooStub` whose every method is `= ???`; a test
+  extends it and overrides **only** the methods that test exercises. Any unexpected call hits `???` and fails loudly,
+  so a test can't accidentally depend on an interaction it didn't declare. Example:
+
+  ```scala
+  trait SuperfakturaAlgebraStub[F[_]] extends SuperfakturaAlgebra[F]:
+    override def listExpenses(window: DateWindow): F[List[Expense]]      = ???
+    override def addExpense(request: NewExpense): F[ExpenseId]           = ???
+    override def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit] = ???
+
+  // in a test — bound as a lexical given, shadowing the companion `live`
+  given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO]:
+    override def listExpenses(window: DateWindow): IO[List[Expense]] = IO.pure(existingFixture)
+  ```
+
+  Stubs live in `core/src/test` and are shared with `cli` tests via `dependsOn(core % "test->test")`.
+- **Hard-coded dates/IDs** for determinism; use `TemporalAdjusters` only where a dynamic date is genuinely required.
+- Properties worth testing: `Debet`/`Kredit` filtering; CP1250 + comma-decimal amount parsing; merchant/datetime
+  extraction from `Informácia pre príjemcu`; external-ref stability; cascade precedence and conflict surfacing;
+  plan round-trip (encode → edit → decode); `apply` idempotency via persisted item status; defensive API error
+  decoding.
+
+## Resolved decisions
+
+- **Matching** — amount+date is the workhorse (M2); a **cloud vision/LLM** model enriches it (M3). **Filenames are not
+  used** — no naming convention assumed.
+- **Expense `type`/category** — always `invoice`, no category; re-categorise in the SF UI if ever needed.
+- **Oversized attachments** — auto-downscale jpg/png to ≤4 MB (scrimage); PDFs and HEIC over 4 MB are flagged in the
+  plan (no native JVM HEIC decode).
+- **VAT** — record the bank gross as `amount` with `vat = 0` (no net/VAT split); see the create-expense field
+  mapping.
+
+## Still open
+
+- **Vision provider (M3)** — which cloud vision/LLM (e.g. Claude vision vs Google Vision), and its config/cost/key.
+  Deferred to M3; nothing earlier depends on it.
+- **`checksum` idempotency** — documented for invoices, unconfirmed for `/expenses/add`; we rely on the external-ref +
+  persisted plan status regardless, so this is informational, not blocking.
+
+## Milestones
+
+- **M0 — Scaffold:** sbt 2.0 build (Scala 3, cats-effect, http4s, circe, fs2-data-csv, decline, pureconfig),
+  `core`/`cli` subprojects, `.scalafmt.conf` + `-Werror` wired into CI, `AppConfig` loaded via pureconfig in `Main`,
+  committed `application.conf` (defaults + `${?ENV}`), algebra traits with companion `given`s + `*Stub`s, pure-core
+  signatures + first tests.
+- **M1 — Expenses from CSV:** `TatraBankaCsv` interpreter, pure `toCandidates`, `SuperfakturaAlgebra.live` (sandbox
+  first),
+  dedup, `plan`/`apply` with `FilePlanStore` (file-mode correction = the plain plan/apply split). Delivers B, C (and A
+  without receipts).
+- **M2 — Receipt pairing:** amount/date matching, base64 attach via `add`/`edit` with `ImagePrepAlgebra` downscaling,
+  idempotency via persisted item status. Delivers full A and D.
+- **M3 — Vision OCR** added to the cascade (cloud vision/LLM; provider chosen at M3).
+- **M4 — Interactive TUI** — introduces `CorrectionStrategyAlgebra[F]` + a TUI interpreter over the existing plan
+  model.
+
+## Success criteria
+
+- A month of Tatra banka transactions becomes correct Superfaktura expenses via one reviewed `plan` + `apply`, with
+  **no duplicates on re-run** (verified against the sandbox first).
+- The large majority of receipts pair automatically (amount+date, then vision OCR); the rest surface as
+  `NeedsResolution` for a one-line fix in the plan file.
+- The printed plan accurately predicts every write `apply` performs.
+- The pure `core` module is covered by mock-free tests; all IO is isolated in algebra interpreters in `cli`.
