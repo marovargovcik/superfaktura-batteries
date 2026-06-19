@@ -1,9 +1,9 @@
 ---
-title: superfaktura CLI — Project Design Requirements
+title: superfaktura-batteries — Project Design Requirements
 icon: 🧾
 ---
 
-# superfaktura CLI — Project Design Requirements
+# superfaktura-batteries — Project Design Requirements
 
 > [!NOTE]
 > Status: Draft v3 (Scala) · Author: mvk@famly.co · Date: 2026-06-19.
@@ -95,8 +95,8 @@ Authorization: SFAPI email=<urlenc-email>&apikey=<key>&company_id=<id>&module=<n
 ```
 
 - `email`, `apikey`, `company_id` come from env, loaded once at the entry point and never logged.
-- `module` is a free-form client identifier we choose (e.g. `superfaktura-cli 1.0`). The docs mark it required but the
-  examples omit it; we send it to be safe.
+- `module` is a free-form client identifier we choose (e.g. `superfaktura-batteries 1.0`). The docs mark it required
+  but the examples omit it; we send it to be safe.
 
 > [!WARNING]
 > Un-encoded `@`/`+` in the email is the #1 documented cause of auth failures.
@@ -474,7 +474,7 @@ is acquired; inside `use`, putting `given Client[IO]` and `given AppConfig` in s
 companion `given` to resolve `PlanProgram.run[IO]` by itself.
 
 ```scala
-object Main extends CommandIOApp(name = "superfaktura", header = "Bookkeeping CLI for Superfaktura.sk"):
+object Main extends CommandIOApp(name = "superfaktura-batteries", header = "Bookkeeping CLI for Superfaktura.sk"):
   override def main: Opts[IO[ExitCode]] =
     (PlanCommand.opts orElse ApplyCommand.opts).map: inputs =>
       ConfigSource.default.loadF[IO, AppConfig].flatMap: config =>
@@ -532,7 +532,7 @@ superfaktura {
   api-key    = ${?SUPERFAKTURA_API_KEY}
   company-id = ""
   company-id = ${?SUPERFAKTURA_COMPANY_ID}
-  module     = "superfaktura-cli 1.0"
+  module     = "superfaktura-batteries 1.0"
 }
 ```
 

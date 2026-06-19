@@ -1,4 +1,4 @@
-# superfaktura
+# superfaktura-batteries
 
 A command-line tool that automates business bookkeeping against the
 [Superfaktura.sk](https://www.superfaktura.sk) API.

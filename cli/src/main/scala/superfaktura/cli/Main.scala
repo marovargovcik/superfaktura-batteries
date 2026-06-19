@@ -11,8 +11,8 @@ import java.nio.file.Path
 
 object Main
     extends CommandIOApp(
-      name = "superfaktura",
-      header = "Bookkeeping CLI for Superfaktura.sk",
+      name = "superfaktura-batteries",
+      header = "Bookkeeping CLI for Superfaktura.sk"
     ):
 
   private val csv: Opts[Option[Path]] =
@@ -43,3 +43,4 @@ object Main
 
   private def runApply(plan: Path): IO[ExitCode] =
     IO.println(s"apply: plan=$plan").as(ExitCode.Success)
+end Main
