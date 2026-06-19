@@ -11,7 +11,7 @@ object ExpensePlanner:
           externalRef = externalRef(t),
           name = t.description,
           amount = t.amount,
-          occurredOn = t.date,
+          occurredOn = t.date
         )
 
   private def externalRef(t: Transaction): ExternalRef =

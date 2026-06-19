@@ -12,7 +12,7 @@ case class Transaction(
     amount: Money,
     direction: TransactionType,
     variableSymbol: Option[String],
-    description: String,
+    description: String
 )
 
 case class ExpenseId(value: Long)
@@ -24,7 +24,7 @@ case class NewExpense(
     amount: Money,
     created: LocalDate,
     variableSymbol: Option[String],
-    comment: Option[String],
+    comment: Option[String]
 )
 
 case class ExpensePatch(attachment: Option[ReceiptBytes])

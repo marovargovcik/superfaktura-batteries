@@ -13,7 +13,7 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 
   "toCandidates" - {
     "keeps only debits and maps them to candidates" in {
-      val debit  = Transaction(date, Money(BigDecimal("45.45"), "EUR"), TransactionType.Debit, Some("123"), "ORANGE")
+      val debit = Transaction(date, Money(BigDecimal("45.45"), "EUR"), TransactionType.Debit, Some("123"), "ORANGE")
       val credit = Transaction(date, Money(BigDecimal("100.00"), "EUR"), TransactionType.Credit, None, "INV 2026005")
 
       val result = ExpensePlanner.toCandidates(List(debit, credit))
@@ -25,7 +25,7 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     "derives a stable external ref from the transaction fields" in {
       val debit = Transaction(date, Money(BigDecimal("45.45"), "EUR"), TransactionType.Debit, Some("123"), "ORANGE")
 
-      val first  = ExpensePlanner.toCandidates(List(debit)).head.externalRef
+      val first = ExpensePlanner.toCandidates(List(debit)).head.externalRef
       val second = ExpensePlanner.toCandidates(List(debit)).head.externalRef
 
       first shouldBe second
