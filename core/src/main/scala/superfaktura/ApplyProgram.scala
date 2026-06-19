@@ -8,6 +8,8 @@ object ApplyProgram:
   def run[F[_]: MonadThrow](using
       store: PlanStore[F],
       superfaktura: SuperfakturaAlgebra[F],
+      receiptSource: ReceiptSourceAlgebra[F],
+      imagePrep: ImagePrepAlgebra[F],
       reporter: ReporterAlgebra[F]
   ): F[Unit] =
     for
@@ -18,10 +20,39 @@ object ApplyProgram:
       _ <- reporter.summary(updated)
     yield ()
 
-  private def applyItem[F[_]: MonadThrow](item: PlanItem)(using superfaktura: SuperfakturaAlgebra[F]): F[PlanItem] =
+  private def applyItem[F[_]: MonadThrow](item: PlanItem)(using
+      superfaktura: SuperfakturaAlgebra[F],
+      receiptSource: ReceiptSourceAlgebra[F],
+      imagePrep: ImagePrepAlgebra[F]
+  ): F[PlanItem] =
     item match
-      case PlanItem(PlanAction.CreateExpense(ref, candidate, _), PlanItemStatus.Pending) =>
-        superfaktura
-          .addExpense(ExpensePlanner.newExpense(ref, candidate))
-          .as(item.copy(status = PlanItemStatus.Applied))
+      case PlanItem(PlanAction.CreateExpense(ref, candidate, attach), PlanItemStatus.Pending) =>
+        for
+          prepared <- attach.traverse(prepare)
+          _ <- superfaktura.addExpense(ExpensePlanner.newExpense(ref, candidate), prepared.flatten)
+        yield item.copy(status = PlanItemStatus.Applied)
+      case PlanItem(PlanAction.AttachToExisting(expenseId, receipt), PlanItemStatus.Pending) =>
+        prepare(receipt).flatMap:
+          case Some(bytes) =>
+            superfaktura.editExpense(expenseId, ExpensePatch(Some(bytes))).as(item.copy(status =
+              PlanItemStatus.Applied
+            ))
+          // Unlike a create, the receipt is the whole point here, so one that won't fit fails the item.
+          case None => item.copy(status = PlanItemStatus.Failed).pure[F]
       case other => other.pure[F]
+
+  // Loads the receipt and fits it under the attachment cap; None means it could not be made to fit.
+  private def prepare[F[_]: MonadThrow](receipt: ReceiptRef)(using
+      receiptSource: ReceiptSourceAlgebra[F],
+      imagePrep: ImagePrepAlgebra[F]
+  ): F[Option[ReceiptBytes]] =
+    AttachmentFormat.of(receipt) match
+      case None => Option.empty[ReceiptBytes].pure[F]
+      case Some(format) =>
+        for
+          bytes <- receiptSource.load(receipt)
+          prepared <- imagePrep.fit(bytes, format)
+        yield prepared match
+          case PreparedAttachment.Fitted(fitted) => Some(fitted)
+          case PreparedAttachment.TooLarge(_) => None
+end ApplyProgram

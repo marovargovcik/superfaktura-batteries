@@ -178,6 +178,73 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
         )
       )
     }
+
+    "attaches a paired receipt to its create, and flags an unmatched receipt" in {
+      val fresh = CandidateExpense(ExternalRef("r1"), "ORANGE", Money(BigDecimal("45.45"), "EUR"), date)
+      val paired = Receipt(ReceiptRef("orange.jpg"), Money(BigDecimal("45.45"), "EUR"), date)
+      val orphan = Receipt(ReceiptRef("orphan.png"), Money(BigDecimal("9.99"), "EUR"), date)
+      val matched = MatchResult(
+        paired = List(Pairing(paired, MatchTarget.Candidate(fresh))),
+        ambiguousReceipts = Nil,
+        contestedTargets = Nil,
+        unmatchedReceipts = List(orphan),
+        unmatchedTargets = Nil
+      )
+
+      ExpensePlanner.buildPlan(Triage(List(fresh), Nil), matched, List(ReceiptRef("blurry.pdf"))).items shouldBe List(
+        PlanItem(
+          PlanAction.CreateExpense(ExternalRef("r1"), fresh, Some(ReceiptRef("orange.jpg"))),
+          PlanItemStatus.Pending
+        ),
+        PlanItem(
+          PlanAction.FlagReceipt(ReceiptRef("orphan.png"), "no transaction matches its amount and date"),
+          PlanItemStatus.Skipped
+        ),
+        PlanItem(
+          PlanAction.FlagReceipt(ReceiptRef("blurry.pdf"), "could not read the amount and date"),
+          PlanItemStatus.Skipped
+        )
+      )
+    }
+
+    "flags ambiguous and contested receipts, deduping a ref that overlaps buckets" in {
+      val c1 = CandidateExpense(ExternalRef("c1"), "A", Money(BigDecimal("1.00"), "EUR"), date)
+      val c2 = CandidateExpense(ExternalRef("c2"), "B", Money(BigDecimal("1.00"), "EUR"), date)
+      val contested = CandidateExpense(ExternalRef("cc"), "C", Money(BigDecimal("2.00"), "EUR"), date)
+      val ambiguousReceipt = Receipt(ReceiptRef("amb.jpg"), Money(BigDecimal("1.00"), "EUR"), date)
+      val r1 = Receipt(ReceiptRef("c1.jpg"), Money(BigDecimal("2.00"), "EUR"), date)
+      val r2 = Receipt(ReceiptRef("c2.jpg"), Money(BigDecimal("2.00"), "EUR"), date)
+      val matched = MatchResult(
+        paired = Nil,
+        ambiguousReceipts =
+          List(AmbiguousReceipt(ambiguousReceipt, List(MatchTarget.Candidate(c1), MatchTarget.Candidate(c2)))),
+        contestedTargets = List(ContestedTarget(MatchTarget.Candidate(contested), List(r1, r2))),
+        unmatchedReceipts = Nil,
+        unmatchedTargets = Nil
+      )
+
+      // amb.jpg is also passed as unreadable, so distinctBy must collapse it to a single flag (ambiguous wins).
+      val flags = ExpensePlanner.buildPlan(Triage(Nil, Nil), matched, List(ReceiptRef("amb.jpg"))).items.collect {
+        case PlanItem(PlanAction.FlagReceipt(ref, reason), _) => ref -> reason
+      }
+      flags.map { case (ref, _) => ref } should contain theSameElementsAs
+        List(ReceiptRef("amb.jpg"), ReceiptRef("c1.jpg"), ReceiptRef("c2.jpg"))
+      flags.count { case (ref, _) => ref == ReceiptRef("amb.jpg") } shouldBe 1
+      flags.collectFirst { case (ref, reason) if ref == ReceiptRef("amb.jpg") => reason }.get should
+        include("2 transactions")
+    }
+  }
+
+  "listingWindow" - {
+    "expands the receipt date span by the match buffer to bound the existing-expense query" in {
+      val receipts = List(
+        Receipt(ReceiptRef("a.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
+        Receipt(ReceiptRef("b.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
+      )
+
+      ExpensePlanner.listingWindow(receipts, MatchWindow.default) shouldBe
+        DateWindow(LocalDate.of(2026, 6, 9), LocalDate.of(2026, 6, 23))
+    }
   }
 
   "newExpense" - {
@@ -209,16 +276,18 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
           PlanItem(
             PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
             PlanItemStatus.Pending
-          )
+          ),
+          PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped)
         )
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 4 item(s)")
+      rendered should include("Plan: 5 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
       rendered should include("skip duplicate of expense 7: already booked")
       rendered should include("needs resolution (ambiguous); candidates: 1, 2")
+      rendered should include("flag receipt /y.png: no match")
     }
   }
 end ExpensePlannerTest

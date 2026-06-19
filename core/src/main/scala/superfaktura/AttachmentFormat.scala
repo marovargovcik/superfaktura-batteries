@@ -19,3 +19,6 @@ object AttachmentFormat:
       case "pdf" => Some(Pdf)
       case "heic" => Some(Heic)
       case _ => None
+
+  def of(ref: ReceiptRef): Option[AttachmentFormat] =
+    ref.path.split("\\.").lastOption.flatMap(fromExtension)

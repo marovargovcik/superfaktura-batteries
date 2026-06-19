@@ -8,7 +8,17 @@ import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
 import org.http4s.{DecodeFailure, Header, Method, Request, Uri}
 import org.typelevel.ci.*
-import superfaktura.{CliError, DateWindow, Expense, ExpenseId, ExpensePatch, Money, NewExpense, SuperfakturaAlgebra}
+import superfaktura.{
+  CliError,
+  DateWindow,
+  Expense,
+  ExpenseId,
+  ExpensePatch,
+  Money,
+  NewExpense,
+  ReceiptBytes,
+  SuperfakturaAlgebra
+}
 
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets.UTF_8
@@ -40,9 +50,9 @@ object SuperfakturaClient:
 
       loop(1, Nil)
 
-    override def addExpense(request: NewExpense): F[ExpenseId] =
+    override def addExpense(request: NewExpense, attachment: Option[ReceiptBytes]): F[ExpenseId] =
       // Per the VAT decision the bank gross is recorded as `amount` with `vat = 0` (no net/VAT split);
-      // every statement line is an already-paid `invoice`.
+      // every statement line is an already-paid `invoice`. The receipt rides in the same create call.
       val body = Json.obj(
         "Expense" := Json.obj(
           "name" := request.name,
@@ -53,7 +63,8 @@ object SuperfakturaClient:
           "variable" := request.variableSymbol,
           "comment" := request.comment,
           "type" := "invoice",
-          "already_paid" := 1
+          "already_paid" := 1,
+          "attachment" := encode(attachment)
         )
       )
       post("expenses/add", body).flatMap: json =>
@@ -66,9 +77,11 @@ object SuperfakturaClient:
           .liftTo[F]
 
     override def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit] =
-      val attachment = patch.attachment.map(bytes => Base64.getEncoder.encodeToString(bytes.value.toArray))
-      val body = Json.obj("Expense" := Json.obj("id" := id.value, "attachment" := attachment))
+      val body = Json.obj("Expense" := Json.obj("id" := id.value, "attachment" := encode(patch.attachment)))
       post("expenses/edit", body).void
+
+    private def encode(attachment: Option[ReceiptBytes]): Option[String] =
+      attachment.map(bytes => Base64.getEncoder.encodeToString(bytes.value.toArray))
 
     private def get(path: String): F[Json] =
       resolve(path).flatMap(uri => runChecked(Request[F](Method.GET, uri).putHeaders(authHeader)))

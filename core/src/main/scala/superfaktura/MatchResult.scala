@@ -7,3 +7,6 @@ case class MatchResult(
     unmatchedReceipts: List[Receipt],
     unmatchedTargets: List[MatchTarget]
 )
+
+object MatchResult:
+  val empty: MatchResult = MatchResult(Nil, Nil, Nil, Nil, Nil)
