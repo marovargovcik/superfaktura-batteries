@@ -15,6 +15,38 @@ object ExpensePlanner:
           occurredOn = transaction.date
         )
 
+  def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
+    val (duplicates, toCreate) = candidates.partitionMap: candidate =>
+      existing.find(matchesRef(candidate, _)) match
+        case Some(expense) => Left(Duplicate(candidate, expense.id, "matching external ref already in Superfaktura"))
+        case None => Right(candidate)
+    Triage(toCreate, duplicates)
+
+  def buildPlan(triage: Triage): Plan =
+    val creates = triage.toCreate.map: candidate =>
+      PlanItem(PlanAction.CreateExpense(candidate.externalRef, candidate, None), PlanItemStatus.Pending)
+    val skips = triage.duplicates.map: duplicate =>
+      PlanItem(
+        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existing),
+        PlanItemStatus.Skipped
+      )
+    Plan(creates ++ skips)
+
+  // Stamp the external ref into the expense comment so a re-run recognises what this tool already booked.
+  def refMarker(ref: ExternalRef): String = s"sfref:${ref.value}"
+
+  def newExpense(ref: ExternalRef, candidate: CandidateExpense): NewExpense =
+    NewExpense(
+      name = candidate.name,
+      amount = candidate.amount,
+      created = candidate.occurredOn,
+      variableSymbol = None,
+      comment = Some(refMarker(ref))
+    )
+
+  private def matchesRef(candidate: CandidateExpense, expense: Expense): Boolean =
+    expense.comment.exists(_.contains(candidate.externalRef.value))
+
   def render(plan: Plan): String =
     val header = s"Plan: ${plan.items.size} item(s)"
     (header :: plan.items.map(renderItem)).mkString("\n")

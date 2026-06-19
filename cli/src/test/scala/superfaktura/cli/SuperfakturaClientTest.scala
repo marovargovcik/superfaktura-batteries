@@ -129,7 +129,7 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
       val body =
         """{"pageCount":1,"items":[{"Expense":{"id":7,"name":"SHELL","amount":73.71,"currency":"EUR","created":"2026-06-16"}}]}"""
       algebra(respond(body)).listExpenses(window).unsafeRunSync() shouldBe
-        List(Expense(ExpenseId(7), "SHELL", Money(BigDecimal("73.71"), "EUR"), LocalDate.of(2026, 6, 16)))
+        List(Expense(ExpenseId(7), "SHELL", Money(BigDecimal("73.71"), "EUR"), LocalDate.of(2026, 6, 16), None))
     }
 
     "follows pagination across pages" in {
