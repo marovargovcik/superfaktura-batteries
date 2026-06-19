@@ -27,6 +27,8 @@ lazy val core = (project in file("core"))
     libraryDependencies ++= Seq(
       "org.typelevel" %% "cats-core" % catsV,
       "org.scodec" %% "scodec-bits" % scodecBitsV,
+      "io.circe" %% "circe-core" % circeV,
+      "io.circe" %% "circe-generic" % circeV,
       "org.scalatest" %% "scalatest" % scalatestV % Test
     )
   )
