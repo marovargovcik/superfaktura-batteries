@@ -1,0 +1,18 @@
+# Secrets (never commit — see docs/pdr.md "Configuration & secrets").
+# application.conf IS committed: it holds only defaults + ${?ENV} refs, no secrets.
+# Real values come from the environment, e.g. a local .envrc (direnv) or shell export.
+.env
+.envrc
+
+# sbt / Scala
+target/
+project/target/
+project/project/
+.bsp/
+
+# Metals / IDE
+.metals/
+.bloop/
+.scala-build/
+.idea/
+.vscode/
