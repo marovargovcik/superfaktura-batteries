@@ -60,7 +60,6 @@ object ExpensePlanner:
       transaction.counterpartyIban.getOrElse(""),
       transaction.description
     )
-    // length-prefix each field so the joined form is injective regardless of field content, then hash for a stable id
     val canonical = fields.map(field => s"${field.length}:$field").mkString
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8))
     ExternalRef(digest.map(byte => f"${byte & 0xff}%02x").mkString)
