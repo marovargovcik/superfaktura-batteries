@@ -42,17 +42,17 @@ object PlanProgram:
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
-    val receipts = receiptPairs.map(_._2)
-    val matched = ReceiptMatcher.matchReceipts(receipts, targets, MatchWindow.default)
     val markerToExpense = existing.flatMap(expense =>
       ExpensePlanner.receiptMarkers(expense.comment).map(_ -> expense.id)
     ).toMap
+    val (alreadyUploaded, fresh) = receiptPairs.partitionMap: (marker, receipt) =>
+      markerToExpense.get(marker) match
+        case Some(expenseId) =>
+          Left(PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped))
+        case None => Right(receipt)
+    val matched = ReceiptMatcher.matchReceipts(fresh, targets, MatchWindow.default)
     val base = ExpensePlanner.buildPlan(triage, matched, unreadable)
-    val skipped = receiptPairs.mapFilter: (marker, receipt) =>
-      markerToExpense.get(marker).map(expenseId =>
-        PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped)
-      )
-    Plan(base.items ++ skipped)
+    Plan(base.items ++ alreadyUploaded)
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],

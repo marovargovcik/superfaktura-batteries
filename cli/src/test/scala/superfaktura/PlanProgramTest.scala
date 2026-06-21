@@ -196,5 +196,27 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
         List((ReceiptRef("orange.jpg"), ExpenseId(20), PlanItemStatus.Skipped))
       items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
     }
+
+    "does not re-attach a receipt already uploaded to the existing expense it matches" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val ref = ExpensePlanner.toCandidates(List(transfer)).head.externalRef
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+      val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
+      val comment = ExpensePlanner.appendMarker(Some(ExpensePlanner.refMarker(ref)), receiptMarker)
+      val existing = Expense(ExpenseId(7), "UHRADA", Money(BigDecimal("45.45"), "EUR"), date, comment)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.ReceiptAlreadyUploaded(r, id), status) => (r, id, status) } shouldBe
+        List((ReceiptRef("inv.pdf"), ExpenseId(7), PlanItemStatus.Skipped))
+      items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
+    }
   }
 end PlanProgramTest
