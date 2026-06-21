@@ -2,6 +2,7 @@ package superfaktura
 
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
+import scodec.bits.ByteVector
 
 import java.time.LocalDate
 
@@ -154,15 +155,36 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
-  "windowOf" - {
-    "spans the earliest and latest candidate dates" in {
+  "coverageWindow" - {
+    "spans the candidate dates and the buffered receipt dates together" in {
       val candidates = List(
         CandidateExpense(ExternalRef("a"), "A", Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
-        CandidateExpense(ExternalRef("b"), "B", Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 2)),
-        CandidateExpense(ExternalRef("c"), "C", Money(BigDecimal("3.00"), "EUR"), LocalDate.of(2026, 6, 20))
+        CandidateExpense(ExternalRef("b"), "B", Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 18))
+      )
+      val receipts = List(
+        Receipt(ReceiptRef("r.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 2)),
+        Receipt(ReceiptRef("s.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
       )
 
-      ExpensePlanner.windowOf(candidates) shouldBe DateWindow(LocalDate.of(2026, 6, 2), LocalDate.of(2026, 6, 20))
+      // candidates span 6/10–6/18; receipts add 6/2−1 = 6/1 (low) and 6/20+3 = 6/23 (high).
+      ExpensePlanner.coverageWindow(candidates, receipts, MatchWindow.default) shouldBe
+        DateWindow(LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 23))
+    }
+
+    "falls back to candidate dates when there are no receipts" in {
+      val candidates = List(CandidateExpense(ExternalRef("a"), "A", Money(BigDecimal("1.00"), "EUR"), date))
+
+      ExpensePlanner.coverageWindow(candidates, Nil, MatchWindow.default) shouldBe DateWindow(date, date)
+    }
+
+    "spans only the buffered receipt dates when there are no candidates" in {
+      val receipts = List(
+        Receipt(ReceiptRef("r.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
+        Receipt(ReceiptRef("s.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
+      )
+
+      ExpensePlanner.coverageWindow(Nil, receipts, MatchWindow.default) shouldBe
+        DateWindow(LocalDate.of(2026, 6, 9), LocalDate.of(2026, 6, 23))
     }
   }
 
@@ -235,18 +257,6 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
-  "listingWindow" - {
-    "expands the receipt date span by the match buffer to bound the existing-expense query" in {
-      val receipts = List(
-        Receipt(ReceiptRef("a.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
-        Receipt(ReceiptRef("b.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
-      )
-
-      ExpensePlanner.listingWindow(receipts, MatchWindow.default) shouldBe
-        DateWindow(LocalDate.of(2026, 6, 9), LocalDate.of(2026, 6, 23))
-    }
-  }
-
   "newExpense" - {
     "stamps the external ref into the comment so a re-run recognises it" in {
       val candidate = CandidateExpense(ExternalRef("abc"), "ORANGE", Money(BigDecimal("45.45"), "EUR"), date)
@@ -256,6 +266,39 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       request.amount shouldBe Money(BigDecimal("45.45"), "EUR")
       request.created shouldBe date
       request.comment shouldBe Some("sfref:abc")
+    }
+  }
+
+  "receiptMarker" - {
+    "hashes the bytes, so identical content yields the same marker and different content does not" in {
+      val a = ReceiptBytes(ByteVector(1, 2, 3))
+      val b = ReceiptBytes(ByteVector(1, 2, 3))
+      val c = ReceiptBytes(ByteVector(9, 9, 9))
+
+      ExpensePlanner.receiptMarker(a) shouldBe ExpensePlanner.receiptMarker(b)
+      ExpensePlanner.receiptMarker(a).value should startWith("sfrcpt:")
+      ExpensePlanner.receiptMarker(a) should not be ExpensePlanner.receiptMarker(c)
+    }
+  }
+
+  "appendMarker" - {
+    "adds the marker to an existing comment but never duplicates it" in {
+      ExpensePlanner.appendMarker(None, ReceiptMarker("sfrcpt:x")) shouldBe Some("sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfref:r sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r sfrcpt:x"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfref:r sfrcpt:x")
+    }
+
+    "matches a recorded marker by whole token, not substring" in {
+      ExpensePlanner.appendMarker(Some("sfrcpt:xyz"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfrcpt:xyz sfrcpt:x")
+    }
+  }
+
+  "receiptMarkers" - {
+    "extracts only the sfrcpt: tokens, ignoring the ref marker and any other text" in {
+      ExpensePlanner.receiptMarkers(Some("sfref:r sfrcpt:a sfrcpt:b booked")) shouldBe
+        Set(ReceiptMarker("sfrcpt:a"), ReceiptMarker("sfrcpt:b"))
+      ExpensePlanner.receiptMarkers(Some("sfref:r")) shouldBe Set.empty
+      ExpensePlanner.receiptMarkers(None) shouldBe Set.empty
     }
   }
 
@@ -271,23 +314,25 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
             ),
             PlanItemStatus.Pending
           ),
-          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf")), PlanItemStatus.Applied),
+          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"), None), PlanItemStatus.Applied),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("d"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
           PlanItem(
             PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
             PlanItemStatus.Pending
           ),
-          PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped)
+          PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped),
+          PlanItem(PlanAction.ReceiptAlreadyUploaded(ReceiptRef("/z.pdf"), ExpenseId(99)), PlanItemStatus.Skipped)
         )
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 5 item(s)")
+      rendered should include("Plan: 6 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
       rendered should include("skip duplicate of expense 7: already booked")
       rendered should include("needs resolution (ambiguous); candidates: 1, 2")
       rendered should include("flag receipt /y.png: no match")
+      rendered should include("skip /z.pdf: already uploaded to expense 99")
     }
   }
 end ExpensePlannerTest

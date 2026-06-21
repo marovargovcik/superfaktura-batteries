@@ -26,7 +26,10 @@ class FilePlanStoreTest extends AnyFreeSpec with Matchers:
         ),
         PlanItemStatus.Pending
       ),
-      PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/receipts/inv.pdf")), PlanItemStatus.Applied)
+      PlanItem(
+        PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/receipts/inv.pdf"), Some("sfref:abc")),
+        PlanItemStatus.Applied
+      )
     )
   )
 

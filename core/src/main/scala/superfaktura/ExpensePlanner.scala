@@ -33,9 +33,11 @@ object ExpensePlanner:
         PlanAction.CreateExpense(candidate.externalRef, candidate, attachByCandidate.get(candidate.externalRef)),
         PlanItemStatus.Pending
       )
+    // `comment` snapshots the expense's note at plan time so apply appends the marker rather than clobbering it;
+    // a concurrent edit between plan and apply is overwritten — accepted for this single-user CLI.
     val attaches = matched.paired.collect:
       case Pairing(receipt, MatchTarget.Existing(expense)) =>
-        PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref), PlanItemStatus.Pending)
+        PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref, expense.comment), PlanItemStatus.Pending)
     val skips = triage.duplicates.map: duplicate =>
       PlanItem(
         PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
@@ -56,20 +58,40 @@ object ExpensePlanner:
       PlanItem(PlanAction.FlagReceipt(ref, reason), PlanItemStatus.Skipped)
     }
 
-  def windowOf(candidates: List[CandidateExpense]): DateWindow =
-    val dates = candidates.map(_.occurredOn)
-    DateWindow(dates.minBy(_.toEpochDay), dates.maxBy(_.toEpochDay))
-
-  def listingWindow(receipts: List[Receipt], window: MatchWindow): DateWindow =
-    val dates = receipts.map(_.date)
-    DateWindow(
-      dates.minBy(_.toEpochDay).minusDays(window.daysBefore),
-      dates.maxBy(_.toEpochDay).plusDays(window.daysAfter)
-    )
+  // The window of existing expenses to fetch: it must cover both the CSV dates (for dedup) and every
+  // date a receipt could attach to (for pairing against existing expenses).
+  def coverageWindow(candidates: List[CandidateExpense], receipts: List[Receipt], window: MatchWindow): DateWindow =
+    val lows = candidates.map(_.occurredOn) ++ receipts.map(_.date.minusDays(window.daysBefore))
+    val highs = candidates.map(_.occurredOn) ++ receipts.map(_.date.plusDays(window.daysAfter))
+    DateWindow(lows.minBy(_.toEpochDay), highs.maxBy(_.toEpochDay))
 
   // Superfaktura has no custom-metadata field, so the human-visible comment is the only place
   // to persist a machine-readable ref for de-duplicating on re-runs.
   def refMarker(ref: ExternalRef): String = s"sfref:${ref.value}"
+
+  def receiptMarker(receipt: ReceiptBytes): ReceiptMarker =
+    ReceiptMarker.of(hex(MessageDigest.getInstance("SHA-256").digest(receipt.value.toArray)))
+
+  def appendMarker(comment: Option[String], marker: ReceiptMarker): Option[String] =
+    val tokens = comment.toList.flatMap(_.split("\\s+"))
+    if tokens.contains(marker.value) then comment
+    else Some((comment.toList :+ marker.value).mkString(" "))
+
+  def receiptMarkers(comment: Option[String]): Set[ReceiptMarker] =
+    comment.toList.flatMap(_.split("\\s+")).flatMap(ReceiptMarker.parse).toSet
+
+  // Split scanned receipts into those already attached to an existing expense (matched by their content-hash
+  // marker recorded in its comment) and the rest that still need pairing.
+  def partitionUploaded(
+      receiptPairs: List[(ReceiptMarker, Receipt)],
+      existing: List[Expense]
+  ): (List[PlanItem], List[Receipt]) =
+    val markerToExpense = existing.flatMap(e => receiptMarkers(e.comment).map(_ -> e.id)).toMap
+    receiptPairs.partitionMap: (marker, receipt) =>
+      markerToExpense.get(marker) match
+        case Some(expenseId) =>
+          Left(PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped))
+        case None => Right(receipt)
 
   def newExpense(ref: ExternalRef, candidate: CandidateExpense): NewExpense =
     NewExpense(
@@ -93,7 +115,7 @@ object ExpensePlanner:
       case PlanAction.CreateExpense(_, expense, attach) =>
         val attachment = attach.fold("")(receipt => s" + ${receipt.path}")
         s"[$status] create '${expense.name}' ${expense.amount.amount} ${expense.amount.currency}$attachment"
-      case PlanAction.AttachToExisting(expenseId, attachment) =>
+      case PlanAction.AttachToExisting(expenseId, attachment, _) =>
         s"[$status] attach ${attachment.path} to expense ${expenseId.value}"
       case PlanAction.SkipDuplicate(_, reason, matched) =>
         s"[$status] skip duplicate of expense ${matched.value}: $reason"
@@ -101,6 +123,8 @@ object ExpensePlanner:
         s"[$status] needs resolution ($reason); candidates: ${candidates.map(_.value).mkString(", ")}"
       case PlanAction.FlagReceipt(receipt, reason) =>
         s"[$status] flag receipt ${receipt.path}: $reason"
+      case PlanAction.ReceiptAlreadyUploaded(receipt, expense) =>
+        s"[$status] skip ${receipt.path}: already uploaded to expense ${expense.value}"
 
   private def expenseName(transaction: Transaction): String =
     cardMerchant(transaction)
@@ -132,5 +156,7 @@ object ExpensePlanner:
     )
     val canonical = fields.map(field => s"${field.length}:$field").mkString
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8))
-    ExternalRef(digest.map(byte => f"${byte & 0xff}%02x").mkString)
+    ExternalRef(hex(digest))
+
+  private def hex(bytes: Array[Byte]): String = bytes.map(byte => f"${byte & 0xff}%02x").mkString
 end ExpensePlanner

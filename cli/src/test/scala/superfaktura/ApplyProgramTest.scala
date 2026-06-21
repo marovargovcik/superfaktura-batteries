@@ -14,6 +14,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
   private val candidate = CandidateExpense(ExternalRef("r1"), "ORANGE", Money(BigDecimal("45.45"), "EUR"), date)
   private val rawReceipt = ReceiptBytes(ByteVector(1, 2, 3))
   private val prepared = ReceiptBytes(ByteVector(9, 9))
+  // The marker hashes the original bytes, not the fitted ones, so a later run recognises the file on disk.
+  private val marker = ExpensePlanner.receiptMarker(rawReceipt)
 
   private def planStore(plan: Plan, saved: Ref[IO, Option[Plan]]): PlanStore[IO] = new PlanStoreStub[IO]:
     override def load: IO[Plan] = IO.pure(plan)
@@ -57,8 +59,9 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
 
       ApplyProgram.run[IO].unsafeRunSync()
 
-      added.get.unsafeRunSync() shouldBe
-        List((ExpensePlanner.newExpense(candidate.externalRef, candidate), Some(prepared)))
+      val expected =
+        ExpensePlanner.newExpense(candidate.externalRef, candidate).copy(comment = Some(s"sfref:r1 ${marker.value}"))
+      added.get.unsafeRunSync() shouldBe List((expected, Some(prepared)))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
         List(PlanItemStatus.Applied, PlanItemStatus.Skipped)
     }
@@ -91,8 +94,14 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
       val saved = Ref.unsafe[IO, Option[Plan]](None)
       val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
       val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
-      val plan =
-        Plan(List(PlanItem(PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("r.png")), PlanItemStatus.Pending)))
+      val plan = Plan(
+        List(
+          PlanItem(
+            PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("r.png"), Some("sfref:e7")),
+            PlanItemStatus.Pending
+          )
+        )
+      )
       given PlanStore[IO] = planStore(plan, saved)
       given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = loadsReceipt
@@ -100,7 +109,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
 
       ApplyProgram.run[IO].unsafeRunSync()
 
-      edited.get.unsafeRunSync() shouldBe List((ExpenseId(7), ExpensePatch(Some(prepared))))
+      edited.get.unsafeRunSync() shouldBe
+        List((ExpenseId(7), ExpensePatch(Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
         List(PlanItemStatus.Applied)
     }
@@ -110,7 +120,10 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
       val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
       val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan =
-        Plan(List(PlanItem(PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("big.pdf")), PlanItemStatus.Pending)))
+        Plan(List(PlanItem(
+          PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("big.pdf"), None),
+          PlanItemStatus.Pending
+        )))
       given PlanStore[IO] = planStore(plan, saved)
       given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = loadsReceipt

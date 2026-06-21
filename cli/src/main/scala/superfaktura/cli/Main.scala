@@ -37,8 +37,8 @@ object Main
       .withDefault(Paths.get("plan.json"))
 
   private val planCommand: Opts[IO[ExitCode]] =
-    Opts.subcommand("plan", "Analyse the inputs and write a reviewable plan (no changes are made).") {
-      val csv = Opts.option[Path]("csv", "Bank statement CSV (Tatra banka export).").orNone
+    Opts.subcommand("plan", "Analyse the CSV (and any receipts) and write a reviewable plan (no changes are made).") {
+      val csv = Opts.option[Path]("csv", "Bank statement CSV (Tatra banka export).")
       val receipts = Opts.option[Path]("receipts", "Folder of receipt/invoice files to pair and attach.").orNone
       (csv, receipts, planPath).mapN(runPlan)
     }
@@ -48,9 +48,8 @@ object Main
 
   override def main: Opts[IO[ExitCode]] = planCommand orElse applyCommand
 
-  private def runPlan(csv: Option[Path], receipts: Option[Path], plan: Path): IO[ExitCode] =
-    if csv.isEmpty && receipts.isEmpty then IO.println("Provide --csv and/or --receipts.").as(ExitCode.Error)
-    else environment(plan)(PlanProgram.run[IO](csv, receipts)).as(ExitCode.Success)
+  private def runPlan(csv: Path, receipts: Option[Path], plan: Path): IO[ExitCode] =
+    environment(plan)(PlanProgram.run[IO](csv, receipts)).as(ExitCode.Success)
 
   private def runApply(plan: Path): IO[ExitCode] =
     environment(plan)(ApplyProgram.run[IO]).as(ExitCode.Success)

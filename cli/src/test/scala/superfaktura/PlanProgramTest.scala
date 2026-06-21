@@ -12,8 +12,8 @@ import java.time.LocalDate
 class PlanProgramTest extends AnyFreeSpec with Matchers:
 
   private val date = LocalDate.of(2026, 6, 16)
-  private val anyCsv = Some(Paths.get("ignored.csv"))
-  private val anyReceipts = Some(Paths.get("ignored-receipts"))
+  private val csvPath = Paths.get("ignored.csv")
+  private val receiptsPath = Some(Paths.get("ignored-receipts"))
 
   private def debit(amount: String, recipientInfo: Option[String], description: String): Transaction =
     Transaction(
@@ -49,7 +49,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
     override def save(plan: Plan): IO[Unit] = saved.set(Some(plan))
 
   "PlanProgram.run" - {
-    "with a CSV and no receipts, creates fresh expenses and skips ref-matched duplicates" in {
+    "with no receipts, creates fresh expenses and skips ref-matched duplicates" in {
       val card =
         debit("73.71", Some("423473******7299 BA MAREK 20260613 16:13:59 73.71EUR SHELL 8203"), "GP NÁKUP POS")
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
@@ -66,12 +66,11 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
           Some(ExpensePlanner.refMarker(shellRef))
         ))
       )
-      // receipts=None, so the receipt source and OCR are never consulted (left as ???).
       given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
       given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](anyCsv, None).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
 
       val plan = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved"))
       plan.items.collect {
@@ -82,7 +81,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       } shouldBe List(ExpenseId(9))
     }
 
-    "with a CSV and receipts, attaches a matched receipt to the new expense it pairs with" in {
+    "attaches a matched receipt to the new expense it pairs with" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
       val saved = Ref.unsafe[IO, Option[Plan]](None)
 
@@ -92,47 +91,49 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
 
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.CreateExpense(_, candidate, attach), _) => candidate.name -> attach
       } shouldBe List("UHRADA POISTNEHO" -> Some(ReceiptRef("orange.jpg")))
     }
 
-    "with receipts and no CSV, attaches matched receipts to existing expenses over the receipt-dated window" in {
-      val existing = Expense(ExpenseId(5), "ACME", Money(BigDecimal("20.00"), "EUR"), date, None)
+    "skips a duplicate transaction and attaches its receipt to the existing expense" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val ref = ExpensePlanner.toCandidates(List(transfer)).head.externalRef
+      val existing =
+        Expense(ExpenseId(5), "UHRADA", Money(BigDecimal("45.45"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
       val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val queried = Ref.unsafe[IO, Option[DateWindow]](None)
 
-      // bank is never read (no CSV), left as ???.
-      given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO] {}
-      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO]:
-        override def listExpenses(window: DateWindow): IO[List[Expense]] = queried.set(Some(window)).as(List(existing))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
       given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
-      given OcrAlgebra[IO] = ocrReturning("20.00", date.minusDays(1))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](None, anyReceipts).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
 
-      queried.get.unsafeRunSync() shouldBe Some(DateWindow(date.minusDays(2), date.plusDays(2)))
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
-        case PlanItem(PlanAction.AttachToExisting(id, ref), _) => id -> ref
-      } shouldBe List(ExpenseId(5) -> ReceiptRef("inv.pdf"))
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.SkipDuplicate(_, _, matched), _) => matched } shouldBe List(ExpenseId(5))
+      items.collect { case PlanItem(PlanAction.AttachToExisting(id, r, _), _) => id -> r } shouldBe
+        List(ExpenseId(5) -> ReceiptRef("inv.pdf"))
+      items.collect { case PlanItem(PlanAction.CreateExpense(_, _, _), _) => () } shouldBe empty
     }
 
     "flags a HEIC receipt as unreadable without loading it or calling OCR" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
       val saved = Ref.unsafe[IO, Option[Plan]](None)
 
-      // no CSV; listExpenses, load and OCR are all left as ??? — a HEIC must reach none of them.
-      given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO] {}
-      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO] {}
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      // load and OCR are left as ??? — a HEIC must reach neither.
       given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
         override def list(folder: Path): IO[List[ReceiptFile]] =
           IO.pure(List(ReceiptFile(ReceiptRef("photo.heic"), 100L)))
       given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](None, anyReceipts).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
 
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
@@ -151,33 +152,14 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
           IO.pure(OcrResult(Some(Money(BigDecimal("45.45"), "EUR")), None))
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
 
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
       } shouldBe List(ReceiptRef("partial.jpg"))
     }
 
-    "with a CSV that has no debits, flags receipts instead of matching them to existing expenses" in {
-      val credit =
-        Transaction(date, Money(BigDecimal("100.00"), "EUR"), TransactionType.Credit, None, None, None, None, "INV")
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-
-      given BankStatementSourceAlgebra[IO] = bankReturning(List(credit))
-      // a CSV was given, so receipts pair with new expenses (none here) — existing expenses are never listed.
-      given SuperfakturaAlgebra[IO] = new SuperfakturaAlgebraStub[IO] {}
-      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("x.jpg")))
-      given OcrAlgebra[IO] = ocrReturning("50.00", date)
-      given PlanStore[IO] = savedBy(saved)
-
-      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
-
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
-        case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
-      } shouldBe List(ReceiptRef("x.jpg"))
-    }
-
-    "flags a receipt that matches no transaction" in {
+    "flags a receipt that matches no expense" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
       val saved = Ref.unsafe[IO, Option[Plan]](None)
 
@@ -187,11 +169,54 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       given OcrAlgebra[IO] = ocrReturning("999.99", date)
       given PlanStore[IO] = savedBy(saved)
 
-      PlanProgram.run[IO](anyCsv, anyReceipts).unsafeRunSync()
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
 
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
       } shouldBe List(ReceiptRef("mystery.png"))
+    }
+
+    "flags a receipt as already-uploaded if its marker is recorded in an existing expense note" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+      // Marker of the receipt file that will be loaded as ByteVector(1).
+      val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
+      val existing = Expense(ExpenseId(20), "PREV", Money(BigDecimal("10.00"), "EUR"), date, Some(receiptMarker.value))
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("orange.jpg")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.ReceiptAlreadyUploaded(ref, id), status) => (ref, id, status) } shouldBe
+        List((ReceiptRef("orange.jpg"), ExpenseId(20), PlanItemStatus.Skipped))
+      items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
+    }
+
+    "does not re-attach a receipt already uploaded to the existing expense it matches" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val ref = ExpensePlanner.toCandidates(List(transfer)).head.externalRef
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+      val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
+      val comment = ExpensePlanner.appendMarker(Some(ExpensePlanner.refMarker(ref)), receiptMarker)
+      val existing = Expense(ExpenseId(7), "UHRADA", Money(BigDecimal("45.45"), "EUR"), date, comment)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.ReceiptAlreadyUploaded(r, id), status) => (r, id, status) } shouldBe
+        List((ReceiptRef("inv.pdf"), ExpenseId(7), PlanItemStatus.Skipped))
+      items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
     }
   }
 end PlanProgramTest

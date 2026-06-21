@@ -139,19 +139,22 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
   }
 
   "editExpense" - {
-    "posts the id and the base64-encoded attachment" in {
+    "posts the id, the comment, and the base64-encoded attachment" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
-      val patch = ExpensePatch(Some(ReceiptBytes(ByteVector("hi".getBytes))))
+      val patch = ExpensePatch(Some(ReceiptBytes(ByteVector("hi".getBytes))), Some("sfref:r sfrcpt:abc"))
       algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), patch).unsafeRunSync()
       val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
       expense.get[Long]("id") shouldBe Right(42)
+      expense.get[String]("comment") shouldBe Right("sfref:r sfrcpt:abc")
       expense.get[String]("attachment") shouldBe Right(Base64.getEncoder.encodeToString("hi".getBytes))
     }
 
-    "sends a null attachment when the patch has none" in {
+    "sends a null comment and attachment when the patch has none" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
-      algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), ExpensePatch(None)).unsafeRunSync()
-      captured.get.unsafeRunSync().hcursor.downField("Expense").get[Option[String]]("attachment") shouldBe Right(None)
+      algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), ExpensePatch(None, None)).unsafeRunSync()
+      val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
+      expense.get[Option[String]]("comment") shouldBe Right(None)
+      expense.get[Option[String]]("attachment") shouldBe Right(None)
     }
   }
 
