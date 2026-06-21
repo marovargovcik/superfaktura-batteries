@@ -1,5 +1,19 @@
 package superfaktura
 
+import superfaktura.bank.{CandidateExpense, ExternalRef}
+import superfaktura.expense.{ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra, SuperfakturaAlgebraStub}
+import superfaktura.plan.{ExpensePlanner, Plan, PlanAction, PlanItem, PlanItemStatus, PlanStore, PlanStoreStub}
+import superfaktura.receipt.{
+  AttachmentFormat,
+  ImagePrepAlgebra,
+  ImagePrepAlgebraStub,
+  PreparedAttachment,
+  ReceiptBytes,
+  ReceiptRef,
+  ReceiptSourceAlgebra,
+  ReceiptSourceAlgebraStub
+}
+
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import org.scalatest.freespec.AnyFreeSpec
