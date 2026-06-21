@@ -1,5 +1,19 @@
 package superfaktura
 
+import superfaktura.bank.{BankStatementSourceAlgebra, CandidateExpense}
+import superfaktura.expense.{Expense, SuperfakturaAlgebra}
+import superfaktura.matching.{MatchTarget, MatchWindow, ReceiptMatcher}
+import superfaktura.plan.{ExpensePlanner, Plan, PlanStore}
+import superfaktura.receipt.{
+  AttachmentFormat,
+  OcrAlgebra,
+  Receipt,
+  ReceiptFile,
+  ReceiptMarker,
+  ReceiptRef,
+  ReceiptSourceAlgebra
+}
+
 import cats.MonadThrow
 import cats.syntax.all.*
 
