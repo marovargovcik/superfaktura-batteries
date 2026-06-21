@@ -154,15 +154,26 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
-  "windowOf" - {
-    "spans the earliest and latest candidate dates" in {
+  "coverageWindow" - {
+    "spans the candidate dates and the buffered receipt dates together" in {
       val candidates = List(
         CandidateExpense(ExternalRef("a"), "A", Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
-        CandidateExpense(ExternalRef("b"), "B", Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 2)),
-        CandidateExpense(ExternalRef("c"), "C", Money(BigDecimal("3.00"), "EUR"), LocalDate.of(2026, 6, 20))
+        CandidateExpense(ExternalRef("b"), "B", Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 18))
+      )
+      val receipts = List(
+        Receipt(ReceiptRef("r.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 2)),
+        Receipt(ReceiptRef("s.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
       )
 
-      ExpensePlanner.windowOf(candidates) shouldBe DateWindow(LocalDate.of(2026, 6, 2), LocalDate.of(2026, 6, 20))
+      // candidates span 6/10–6/18; receipts add 6/2−1 = 6/1 (low) and 6/20+3 = 6/23 (high).
+      ExpensePlanner.coverageWindow(candidates, receipts, MatchWindow.default) shouldBe
+        DateWindow(LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 23))
+    }
+
+    "falls back to candidate dates when there are no receipts" in {
+      val candidates = List(CandidateExpense(ExternalRef("a"), "A", Money(BigDecimal("1.00"), "EUR"), date))
+
+      ExpensePlanner.coverageWindow(candidates, Nil, MatchWindow.default) shouldBe DateWindow(date, date)
     }
   }
 
@@ -232,18 +243,6 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       flags.count { case (ref, _) => ref == ReceiptRef("amb.jpg") } shouldBe 1
       flags.collectFirst { case (ref, reason) if ref == ReceiptRef("amb.jpg") => reason }.get should
         include("2 transactions")
-    }
-  }
-
-  "listingWindow" - {
-    "expands the receipt date span by the match buffer to bound the existing-expense query" in {
-      val receipts = List(
-        Receipt(ReceiptRef("a.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
-        Receipt(ReceiptRef("b.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
-      )
-
-      ExpensePlanner.listingWindow(receipts, MatchWindow.default) shouldBe
-        DateWindow(LocalDate.of(2026, 6, 9), LocalDate.of(2026, 6, 23))
     }
   }
 

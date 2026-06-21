@@ -56,16 +56,12 @@ object ExpensePlanner:
       PlanItem(PlanAction.FlagReceipt(ref, reason), PlanItemStatus.Skipped)
     }
 
-  def windowOf(candidates: List[CandidateExpense]): DateWindow =
-    val dates = candidates.map(_.occurredOn)
-    DateWindow(dates.minBy(_.toEpochDay), dates.maxBy(_.toEpochDay))
-
-  def listingWindow(receipts: List[Receipt], window: MatchWindow): DateWindow =
-    val dates = receipts.map(_.date)
-    DateWindow(
-      dates.minBy(_.toEpochDay).minusDays(window.daysBefore),
-      dates.maxBy(_.toEpochDay).plusDays(window.daysAfter)
-    )
+  // The window of existing expenses to fetch: it must cover both the CSV dates (for dedup) and every
+  // date a receipt could attach to (for pairing against existing expenses). Requires a non-empty input.
+  def coverageWindow(candidates: List[CandidateExpense], receipts: List[Receipt], window: MatchWindow): DateWindow =
+    val lows = candidates.map(_.occurredOn) ++ receipts.map(_.date.minusDays(window.daysBefore))
+    val highs = candidates.map(_.occurredOn) ++ receipts.map(_.date.plusDays(window.daysAfter))
+    DateWindow(lows.minBy(_.toEpochDay), highs.maxBy(_.toEpochDay))
 
   // Superfaktura has no custom-metadata field, so the human-visible comment is the only place
   // to persist a machine-readable ref for de-duplicating on re-runs.

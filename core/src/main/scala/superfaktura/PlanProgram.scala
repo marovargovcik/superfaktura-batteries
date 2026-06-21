@@ -7,7 +7,7 @@ import java.nio.file.Path
 
 object PlanProgram:
 
-  def run[F[_]: MonadThrow](csv: Option[Path], receipts: Option[Path])(using
+  def run[F[_]: MonadThrow](csv: Path, receipts: Option[Path])(using
       bank: BankStatementSourceAlgebra[F],
       superfaktura: SuperfakturaAlgebra[F],
       receiptSource: ReceiptSourceAlgebra[F],
@@ -16,54 +16,33 @@ object PlanProgram:
       reporter: ReporterAlgebra[F]
   ): F[Unit] =
     for
-      transactions <- csv.traverse(bank.read).map(_.getOrElse(Nil))
+      transactions <- bank.read(csv)
       candidates = ExpensePlanner.toCandidates(transactions)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (received, unreadable) = scanned
-      plan <- assemble(csv.isDefined, candidates, received, unreadable)
+      existing <- listExisting(candidates, received)
+      plan = assemble(candidates, existing, received, unreadable)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
 
-  // A CSV (even one with no debits) means receipts pair with the new expenses it produces (use cases A/C);
-  // receipts alone pair with expenses already in Superfaktura, windowed by the receipt dates (use case D).
-  private def assemble[F[_]: MonadThrow](
-      csvProvided: Boolean,
+  private def listExisting[F[_]: MonadThrow](candidates: List[CandidateExpense], receipts: List[Receipt])(using
+      superfaktura: SuperfakturaAlgebra[F]
+  ): F[List[Expense]] =
+    if candidates.isEmpty && receipts.isEmpty then List.empty[Expense].pure[F]
+    else superfaktura.listExpenses(ExpensePlanner.coverageWindow(candidates, receipts, MatchWindow.default))
+
+  // A receipt pairs with whichever expense matches its amount + date — a new one the CSV will create, or one
+  // already in Superfaktura — so a re-run dedupes the transactions and still attaches receipts to existing expenses.
+  private def assemble(
       candidates: List[CandidateExpense],
+      existing: List[Expense],
       received: List[Receipt],
       unreadable: List[ReceiptRef]
-  )(using SuperfakturaAlgebra[F]): F[Plan] =
-    if csvProvided then planForCandidates(candidates, received, unreadable)
-    else if received.nonEmpty then planForExisting(received, unreadable)
-    else ExpensePlanner.buildPlan(Triage(Nil, Nil), MatchResult.empty, unreadable).pure[F]
-
-  private def planForCandidates[F[_]: MonadThrow](
-      candidates: List[CandidateExpense],
-      received: List[Receipt],
-      unreadable: List[ReceiptRef]
-  )(using SuperfakturaAlgebra[F]): F[Plan] =
-    existingForDedup(candidates).map: existing =>
-      val triage = ExpensePlanner.triage(candidates, existing)
-      val targets = triage.toCreate.map(MatchTarget.Candidate(_))
-      ExpensePlanner.buildPlan(triage, ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default), unreadable)
-
-  private def existingForDedup[F[_]: MonadThrow](
-      candidates: List[CandidateExpense]
-  )(using superfaktura: SuperfakturaAlgebra[F]): F[List[Expense]] =
-    if candidates.isEmpty then List.empty[Expense].pure[F]
-    else superfaktura.listExpenses(ExpensePlanner.windowOf(candidates))
-
-  private def planForExisting[F[_]: MonadThrow](
-      received: List[Receipt],
-      unreadable: List[ReceiptRef]
-  )(using superfaktura: SuperfakturaAlgebra[F]): F[Plan] =
-    superfaktura.listExpenses(ExpensePlanner.listingWindow(received, MatchWindow.default)).map: existing =>
-      val targets = existing.map(MatchTarget.Existing(_))
-      ExpensePlanner.buildPlan(
-        Triage(Nil, Nil),
-        ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default),
-        unreadable
-      )
+  ): Plan =
+    val triage = ExpensePlanner.triage(candidates, existing)
+    val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
+    ExpensePlanner.buildPlan(triage, ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default), unreadable)
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],
