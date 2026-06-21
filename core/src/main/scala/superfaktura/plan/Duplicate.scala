@@ -1,4 +1,4 @@
-package superfaktura.matching
+package superfaktura.plan
 
 import superfaktura.bank.CandidateExpense
 import superfaktura.expense.ExpenseId

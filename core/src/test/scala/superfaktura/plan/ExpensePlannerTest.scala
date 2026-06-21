@@ -3,16 +3,7 @@ package superfaktura.plan
 import superfaktura.{DateWindow, Money}
 import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, TransactionType}
 import superfaktura.expense.{Expense, ExpenseId}
-import superfaktura.matching.{
-  AmbiguousReceipt,
-  ContestedTarget,
-  Duplicate,
-  MatchResult,
-  MatchTarget,
-  MatchWindow,
-  Pairing,
-  Triage
-}
+import superfaktura.matching.{AmbiguousReceipt, ContestedTarget, MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
 
 import org.scalatest.freespec.AnyFreeSpec

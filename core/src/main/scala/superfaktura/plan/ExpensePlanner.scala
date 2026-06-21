@@ -3,7 +3,7 @@ package superfaktura.plan
 import superfaktura.DateWindow
 import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, TransactionType}
 import superfaktura.expense.{Expense, NewExpense}
-import superfaktura.matching.{Duplicate, MatchResult, MatchTarget, MatchWindow, Pairing, Triage}
+import superfaktura.matching.{MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
 
 import java.nio.charset.StandardCharsets
