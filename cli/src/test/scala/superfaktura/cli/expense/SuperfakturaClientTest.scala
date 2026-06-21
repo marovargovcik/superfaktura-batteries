@@ -1,25 +1,24 @@
 package superfaktura.cli.expense
 
-import superfaktura.{CliError, DateWindow, Money}
-import superfaktura.cli.{Secret, SuperfakturaConfig}
-import superfaktura.expense.{Expense, ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra}
-import superfaktura.receipt.ReceiptBytes
+import java.time.LocalDate
+import java.util.Base64
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.parse
+import org.http4s.{HttpApp, Response, Status}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
-import org.http4s.{HttpApp, Response, Status}
-import org.typelevel.ci.*
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.time.LocalDate
-import java.util.Base64
+import org.typelevel.ci.*
 import scodec.bits.ByteVector
+import superfaktura.{CliError, DateWindow, Money}
+import superfaktura.cli.{Secret, SuperfakturaConfig}
+import superfaktura.expense.{Expense, ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra}
+import superfaktura.receipt.ReceiptBytes
 
 class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
 

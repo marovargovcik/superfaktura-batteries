@@ -1,14 +1,8 @@
 package superfaktura.cli
 
-import superfaktura.{ApplyProgram, CliError, PlanProgram, ReporterAlgebra}
-import superfaktura.bank.BankStatementSourceAlgebra
-import superfaktura.cli.bank.TatraBankaSource
-import superfaktura.cli.expense.SuperfakturaClient
-import superfaktura.cli.plan.FilePlanStore
-import superfaktura.cli.receipt.{ClaudeOcr, FileReceiptSource, ScrimageImagePrep}
-import superfaktura.expense.SuperfakturaAlgebra
-import superfaktura.plan.PlanStore
-import superfaktura.receipt.{Attachment, ImagePrepAlgebra, OcrAlgebra, ReceiptSourceAlgebra}
+import java.nio.file.{Path, Paths}
+
+import scala.concurrent.duration.*
 
 import cats.effect.{ExitCode, IO}
 import cats.syntax.all.*
@@ -18,9 +12,15 @@ import org.http4s.client.Client
 import org.http4s.client.middleware.{Retry, RetryPolicy}
 import org.http4s.ember.client.EmberClientBuilder
 import pureconfig.ConfigSource
-
-import java.nio.file.{Path, Paths}
-import scala.concurrent.duration.*
+import superfaktura.{ApplyProgram, CliError, PlanProgram, ReporterAlgebra}
+import superfaktura.bank.BankStatementSourceAlgebra
+import superfaktura.cli.bank.TatraBankaSource
+import superfaktura.cli.expense.SuperfakturaClient
+import superfaktura.cli.plan.FilePlanStore
+import superfaktura.cli.receipt.{ClaudeOcr, FileReceiptSource, ScrimageImagePrep}
+import superfaktura.expense.SuperfakturaAlgebra
+import superfaktura.plan.PlanStore
+import superfaktura.receipt.{Attachment, ImagePrepAlgebra, OcrAlgebra, ReceiptSourceAlgebra}
 
 object Main
     extends CommandIOApp(

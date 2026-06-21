@@ -1,18 +1,17 @@
 package superfaktura.cli.bank
 
-import superfaktura.CliError
-import superfaktura.bank.{BankStatementSourceAlgebra, TatraBankaCsv, Transaction}
+import java.io.IOException
+import java.nio.charset.Charset
+import java.nio.file.Path
 
 import cats.ApplicativeThrow
 import cats.effect.Async
 import cats.syntax.all.*
-import fs2.data.csv.{CsvRow, lowlevel}
+import fs2.data.csv.{lowlevel, CsvRow}
 import fs2.io.file.{Files, Path as FsPath}
 import fs2.text
-
-import java.io.IOException
-import java.nio.charset.Charset
-import java.nio.file.Path
+import superfaktura.CliError
+import superfaktura.bank.{BankStatementSourceAlgebra, TatraBankaCsv, Transaction}
 
 object TatraBankaSource:
 

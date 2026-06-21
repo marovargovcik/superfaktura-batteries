@@ -1,8 +1,8 @@
 package superfaktura.expense
 
-import superfaktura.Money
-
 import java.time.LocalDate
+
+import superfaktura.Money
 
 case class NewExpense(
     name: String,

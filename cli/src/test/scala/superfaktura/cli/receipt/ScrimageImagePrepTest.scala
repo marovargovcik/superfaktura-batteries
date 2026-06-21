@@ -1,7 +1,9 @@
 package superfaktura.cli.receipt
 
-import superfaktura.CliError
-import superfaktura.receipt.{AttachmentFormat, PreparedAttachment, ReceiptBytes}
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import java.util.Random
+import javax.imageio.ImageIO
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -9,11 +11,8 @@ import com.sksamuel.scrimage.ImmutableImage
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
-
-import java.awt.image.BufferedImage
-import java.io.ByteArrayOutputStream
-import java.util.Random
-import javax.imageio.ImageIO
+import superfaktura.CliError
+import superfaktura.receipt.{AttachmentFormat, PreparedAttachment, ReceiptBytes}
 
 class ScrimageImagePrepTest extends AnyFreeSpec with Matchers:
 

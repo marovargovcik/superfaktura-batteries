@@ -1,10 +1,11 @@
 package superfaktura.bank
 
-import superfaktura.Money
-
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+
 import scala.util.Try
+
+import superfaktura.Money
 
 object TatraBankaCsv:
 

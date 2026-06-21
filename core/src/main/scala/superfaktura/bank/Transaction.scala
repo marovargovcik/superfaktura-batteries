@@ -1,8 +1,8 @@
 package superfaktura.bank
 
-import superfaktura.Money
-
 import java.time.LocalDate
+
+import superfaktura.Money
 
 case class Transaction(
     date: LocalDate,

@@ -1,5 +1,9 @@
 package superfaktura
 
+import java.nio.file.Path
+
+import cats.MonadThrow
+import cats.syntax.all.*
 import superfaktura.bank.{BankStatementSourceAlgebra, CandidateExpense}
 import superfaktura.expense.{Expense, SuperfakturaAlgebra}
 import superfaktura.matching.{MatchTarget, MatchWindow, ReceiptMatcher}
@@ -13,11 +17,6 @@ import superfaktura.receipt.{
   ReceiptRef,
   ReceiptSourceAlgebra
 }
-
-import cats.MonadThrow
-import cats.syntax.all.*
-
-import java.nio.file.Path
 
 object PlanProgram:
 

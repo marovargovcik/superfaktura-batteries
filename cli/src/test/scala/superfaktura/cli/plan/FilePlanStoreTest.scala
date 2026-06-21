@@ -1,18 +1,17 @@
 package superfaktura.cli.plan
 
-import superfaktura.{CliError, Money}
-import superfaktura.bank.{CandidateExpense, ExternalRef}
-import superfaktura.expense.ExpenseId
-import superfaktura.plan.{Plan, PlanAction, PlanItem, PlanItemStatus}
-import superfaktura.receipt.ReceiptRef
+import java.nio.file.Files
+import java.time.LocalDate
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.nio.file.Files
-import java.time.LocalDate
+import superfaktura.{CliError, Money}
+import superfaktura.bank.{CandidateExpense, ExternalRef}
+import superfaktura.expense.ExpenseId
+import superfaktura.plan.{Plan, PlanAction, PlanItem, PlanItemStatus}
+import superfaktura.receipt.ReceiptRef
 
 class FilePlanStoreTest extends AnyFreeSpec with Matchers:
 

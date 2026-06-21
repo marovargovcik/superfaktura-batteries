@@ -1,21 +1,21 @@
 package superfaktura.cli.receipt
 
-import superfaktura.{CliError, Money}
-import superfaktura.cli.ClaudeConfig
-import superfaktura.receipt.{OcrAlgebra, OcrResult, ReceiptBytes, ReceiptMedia}
+import java.time.LocalDate
+import java.util.Base64
+
+import scala.util.Try
 
 import cats.effect.Concurrent
 import cats.syntax.all.*
 import io.circe.{ACursor, Json}
 import io.circe.syntax.*
+import org.http4s.{DecodeFailure, Header, Method, Request, Response, Uri}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
-import org.http4s.{DecodeFailure, Header, Method, Request, Response, Uri}
 import org.typelevel.ci.*
-
-import java.time.LocalDate
-import java.util.Base64
-import scala.util.Try
+import superfaktura.{CliError, Money}
+import superfaktura.cli.ClaudeConfig
+import superfaktura.receipt.{OcrAlgebra, OcrResult, ReceiptBytes, ReceiptMedia}
 
 object ClaudeOcr:
 

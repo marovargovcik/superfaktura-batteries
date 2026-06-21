@@ -1,11 +1,10 @@
 package superfaktura.plan
 
+import io.circe.Codec
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import superfaktura.bank.{CandidateExpense, ExternalRef}
 import superfaktura.expense.ExpenseId
 import superfaktura.receipt.ReceiptRef
-
-import io.circe.Codec
-import io.circe.derivation.{Configuration, ConfiguredCodec}
 
 enum PlanAction:
   case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])

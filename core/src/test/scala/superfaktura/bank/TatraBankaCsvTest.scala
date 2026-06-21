@@ -1,11 +1,10 @@
 package superfaktura.bank
 
-import superfaktura.Money
+import java.time.LocalDate
 
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.time.LocalDate
+import superfaktura.Money
 
 class TatraBankaCsvTest extends AnyFreeSpec with Matchers:
 

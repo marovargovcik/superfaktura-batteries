@@ -1,15 +1,14 @@
 package superfaktura.cli.bank
 
-import superfaktura.{CliError, Money}
-import superfaktura.bank.TransactionType
+import java.nio.charset.Charset
+import java.nio.file.{Files, Path}
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.nio.charset.Charset
-import java.nio.file.{Files, Path}
+import superfaktura.{CliError, Money}
+import superfaktura.bank.TransactionType
 
 class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
 
