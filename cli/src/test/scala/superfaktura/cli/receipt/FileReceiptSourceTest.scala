@@ -1,15 +1,14 @@
 package superfaktura.cli.receipt
 
-import superfaktura.CliError
-import superfaktura.receipt.ReceiptRef
+import java.nio.file.{Files as JFiles, Path}
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
-
-import java.nio.file.{Files as JFiles, Path}
+import superfaktura.CliError
+import superfaktura.receipt.ReceiptRef
 
 class FileReceiptSourceTest extends AnyFreeSpec with Matchers:
 

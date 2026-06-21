@@ -1,13 +1,13 @@
 package superfaktura.plan
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
 import superfaktura.DateWindow
 import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, TransactionType}
 import superfaktura.expense.{Expense, NewExpense}
 import superfaktura.matching.{MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
-
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 object ExpensePlanner:
 

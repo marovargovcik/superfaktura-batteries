@@ -1,16 +1,15 @@
 package superfaktura.plan
 
+import java.time.LocalDate
+
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.matchers.should.Matchers
+import scodec.bits.ByteVector
 import superfaktura.{DateWindow, Money}
 import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, TransactionType}
 import superfaktura.expense.{Expense, ExpenseId}
 import superfaktura.matching.{AmbiguousReceipt, ContestedTarget, MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
-
-import org.scalatest.freespec.AnyFreeSpec
-import org.scalatest.matchers.should.Matchers
-import scodec.bits.ByteVector
-
-import java.time.LocalDate
 
 class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 

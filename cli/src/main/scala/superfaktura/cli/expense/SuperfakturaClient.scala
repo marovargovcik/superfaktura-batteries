@@ -1,24 +1,24 @@
 package superfaktura.cli.expense
 
-import superfaktura.{CliError, DateWindow, Money}
-import superfaktura.cli.SuperfakturaConfig
-import superfaktura.expense.{Expense, ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra}
-import superfaktura.receipt.ReceiptBytes
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets.UTF_8
+import java.time.LocalDate
+import java.util.Base64
+
+import scala.util.Try
 
 import cats.effect.Concurrent
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import org.http4s.{DecodeFailure, Header, Method, Request, Uri}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
-import org.http4s.{DecodeFailure, Header, Method, Request, Uri}
 import org.typelevel.ci.*
-
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets.UTF_8
-import java.time.LocalDate
-import java.util.Base64
-import scala.util.Try
+import superfaktura.{CliError, DateWindow, Money}
+import superfaktura.cli.SuperfakturaConfig
+import superfaktura.expense.{Expense, ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra}
+import superfaktura.receipt.ReceiptBytes
 
 object SuperfakturaClient:
 

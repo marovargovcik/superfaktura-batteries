@@ -1,5 +1,7 @@
 package superfaktura
 
+import cats.MonadThrow
+import cats.syntax.all.*
 import superfaktura.expense.{ExpensePatch, SuperfakturaAlgebra}
 import superfaktura.plan.{ExpensePlanner, Plan, PlanAction, PlanItem, PlanItemStatus, PlanStore}
 import superfaktura.receipt.{
@@ -11,9 +13,6 @@ import superfaktura.receipt.{
   ReceiptRef,
   ReceiptSourceAlgebra
 }
-
-import cats.MonadThrow
-import cats.syntax.all.*
 
 object ApplyProgram:
 

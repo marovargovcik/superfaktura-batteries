@@ -1,16 +1,15 @@
 package superfaktura.plan
 
-import superfaktura.Money
-import superfaktura.bank.{CandidateExpense, ExternalRef}
-import superfaktura.expense.ExpenseId
-import superfaktura.receipt.ReceiptRef
+import java.time.LocalDate
 
 import io.circe.{Decoder, Json}
 import io.circe.syntax.*
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-
-import java.time.LocalDate
+import superfaktura.Money
+import superfaktura.bank.{CandidateExpense, ExternalRef}
+import superfaktura.expense.ExpenseId
+import superfaktura.receipt.ReceiptRef
 
 class PlanCodecTest extends AnyFreeSpec with Matchers:
 

@@ -1,10 +1,10 @@
 package superfaktura.matching
 
+import java.time.LocalDate
+
 import superfaktura.Money
 import superfaktura.bank.CandidateExpense
 import superfaktura.expense.Expense
-
-import java.time.LocalDate
 
 // A receipt can be paired either to a new expense derived from the CSV (use cases A/C) or to an
 // expense already in Superfaktura (use case D); both expose the amount and date the matcher needs.

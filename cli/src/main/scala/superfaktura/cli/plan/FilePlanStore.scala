@@ -1,7 +1,7 @@
 package superfaktura.cli.plan
 
-import superfaktura.CliError
-import superfaktura.plan.{Plan, PlanStore}
+import java.io.IOException
+import java.nio.file.Path
 
 import cats.effect.Async
 import cats.syntax.all.*
@@ -10,9 +10,8 @@ import fs2.io.file.{Files, Path as FsPath}
 import fs2.text
 import io.circe.parser.decode
 import io.circe.syntax.*
-
-import java.io.IOException
-import java.nio.file.Path
+import superfaktura.CliError
+import superfaktura.plan.{Plan, PlanStore}
 
 object FilePlanStore:
 

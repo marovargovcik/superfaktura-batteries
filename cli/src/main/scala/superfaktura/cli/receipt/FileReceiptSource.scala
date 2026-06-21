@@ -1,15 +1,14 @@
 package superfaktura.cli.receipt
 
-import superfaktura.CliError
-import superfaktura.receipt.{AttachmentFormat, ReceiptBytes, ReceiptFile, ReceiptRef, ReceiptSourceAlgebra}
+import java.io.IOException
+import java.nio.file.Path
 
 import cats.effect.Async
 import cats.syntax.all.*
 import fs2.io.file.{Files, Path as FsPath}
 import scodec.bits.ByteVector
-
-import java.io.IOException
-import java.nio.file.Path
+import superfaktura.CliError
+import superfaktura.receipt.{AttachmentFormat, ReceiptBytes, ReceiptFile, ReceiptRef, ReceiptSourceAlgebra}
 
 object FileReceiptSource:
 

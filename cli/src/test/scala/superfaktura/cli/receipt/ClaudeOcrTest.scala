@@ -1,23 +1,22 @@
 package superfaktura.cli.receipt
 
-import superfaktura.{CliError, Money}
-import superfaktura.cli.{ClaudeConfig, Secret}
-import superfaktura.receipt.{OcrAlgebra, OcrResult, ReceiptBytes, ReceiptMedia}
+import java.time.LocalDate
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.parse
+import org.http4s.{HttpApp, Response, Status}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client
-import org.http4s.{HttpApp, Response, Status}
-import org.typelevel.ci.*
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
+import org.typelevel.ci.*
 import scodec.bits.ByteVector
-
-import java.time.LocalDate
+import superfaktura.{CliError, Money}
+import superfaktura.cli.{ClaudeConfig, Secret}
+import superfaktura.receipt.{OcrAlgebra, OcrResult, ReceiptBytes, ReceiptMedia}
 
 class ClaudeOcrTest extends AnyFreeSpec with Matchers:
 

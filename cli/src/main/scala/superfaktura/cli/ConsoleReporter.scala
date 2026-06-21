@@ -1,9 +1,8 @@
 package superfaktura.cli
 
+import cats.effect.std.Console
 import superfaktura.ReporterAlgebra
 import superfaktura.plan.{ExpensePlanner, Plan}
-
-import cats.effect.std.Console
 
 object ConsoleReporter:
 

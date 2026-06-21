@@ -1,14 +1,13 @@
 package superfaktura.matching
 
+import java.time.LocalDate
+
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.matchers.should.Matchers
 import superfaktura.Money
 import superfaktura.bank.{CandidateExpense, ExternalRef}
 import superfaktura.expense.{Expense, ExpenseId}
 import superfaktura.receipt.{Receipt, ReceiptRef}
-
-import org.scalatest.freespec.AnyFreeSpec
-import org.scalatest.matchers.should.Matchers
-
-import java.time.LocalDate
 
 class ReceiptMatcherTest extends AnyFreeSpec with Matchers:
 

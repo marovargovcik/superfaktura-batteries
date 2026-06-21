@@ -1,5 +1,12 @@
 package superfaktura
 
+import java.time.LocalDate
+
+import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.matchers.should.Matchers
+import scodec.bits.ByteVector
 import superfaktura.bank.{CandidateExpense, ExternalRef}
 import superfaktura.expense.{ExpenseId, ExpensePatch, NewExpense, SuperfakturaAlgebra, SuperfakturaAlgebraStub}
 import superfaktura.plan.{ExpensePlanner, Plan, PlanAction, PlanItem, PlanItemStatus, PlanStore, PlanStoreStub}
@@ -13,14 +20,6 @@ import superfaktura.receipt.{
   ReceiptSourceAlgebra,
   ReceiptSourceAlgebraStub
 }
-
-import cats.effect.{IO, Ref}
-import cats.effect.unsafe.implicits.global
-import org.scalatest.freespec.AnyFreeSpec
-import org.scalatest.matchers.should.Matchers
-import scodec.bits.ByteVector
-
-import java.time.LocalDate
 
 class ApplyProgramTest extends AnyFreeSpec with Matchers:
 

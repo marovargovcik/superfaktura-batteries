@@ -1,15 +1,14 @@
 package superfaktura.cli.receipt
 
-import superfaktura.CliError
-import superfaktura.receipt.{AttachmentFormat, ImagePrepAlgebra, PreparedAttachment, ReceiptBytes}
+import scala.annotation.tailrec
 
 import cats.effect.Sync
 import cats.syntax.all.*
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.{ImageWriter, JpegWriter, PngWriter}
 import scodec.bits.ByteVector
-
-import scala.annotation.tailrec
+import superfaktura.CliError
+import superfaktura.receipt.{AttachmentFormat, ImagePrepAlgebra, PreparedAttachment, ReceiptBytes}
 
 object ScrimageImagePrep:
 
