@@ -115,7 +115,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
       val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
       items.collect { case PlanItem(PlanAction.SkipDuplicate(_, _, matched), _) => matched } shouldBe List(ExpenseId(5))
-      items.collect { case PlanItem(PlanAction.AttachToExisting(id, r), _) => id -> r } shouldBe
+      items.collect { case PlanItem(PlanAction.AttachToExisting(id, r, _), _) => id -> r } shouldBe
         List(ExpenseId(5) -> ReceiptRef("inv.pdf"))
       items.collect { case PlanItem(PlanAction.CreateExpense(_, _, _), _) => () } shouldBe empty
     }
@@ -174,6 +174,27 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref
       } shouldBe List(ReceiptRef("mystery.png"))
+    }
+
+    "flags a receipt as already-uploaded if its marker is recorded in an existing expense note" in {
+      val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+      // Marker of the receipt file that will be loaded as ByteVector(1).
+      val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
+      val existing = Expense(ExpenseId(20), "PREV", Money(BigDecimal("10.00"), "EUR"), date, Some(receiptMarker))
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("orange.jpg")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
+      given PlanStore[IO] = savedBy(saved)
+
+      PlanProgram.run[IO](csvPath, receiptsPath).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.ReceiptAlreadyUploaded(ref, id), status) => (ref, id, status) } shouldBe
+        List((ReceiptRef("orange.jpg"), ExpenseId(20), PlanItemStatus.Skipped))
+      items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
     }
   }
 end PlanProgramTest

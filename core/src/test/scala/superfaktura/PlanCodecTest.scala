@@ -24,11 +24,18 @@ class PlanCodecTest extends AnyFreeSpec with Matchers:
         ),
         PlanItemStatus.Pending
       ),
-      PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/receipts/inv.pdf")), PlanItemStatus.Applied),
+      PlanItem(
+        PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/receipts/inv.pdf"), Some("sfref:abc")),
+        PlanItemStatus.Applied
+      ),
       PlanItem(PlanAction.SkipDuplicate(ExternalRef("def456"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
       PlanItem(
         PlanAction.NeedsResolution(ExternalRef("ghi789"), List(ExpenseId(1), ExpenseId(2)), "ambiguous amount"),
         PlanItemStatus.Pending
+      ),
+      PlanItem(
+        PlanAction.ReceiptAlreadyUploaded(ReceiptRef("/receipts/orange.jpg"), ExpenseId(20)),
+        PlanItemStatus.Skipped
       )
     )
   )
@@ -39,7 +46,7 @@ class PlanCodecTest extends AnyFreeSpec with Matchers:
     }
 
     "encodes a PlanAction with a flat `type` discriminator" in {
-      val action: PlanAction = PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"))
+      val action: PlanAction = PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"), None)
       action.asJson.hcursor.get[String]("type") shouldBe Right("AttachToExisting")
     }
 

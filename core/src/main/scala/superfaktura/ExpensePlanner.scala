@@ -35,7 +35,7 @@ object ExpensePlanner:
       )
     val attaches = matched.paired.collect:
       case Pairing(receipt, MatchTarget.Existing(expense)) =>
-        PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref), PlanItemStatus.Pending)
+        PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref, expense.comment), PlanItemStatus.Pending)
     val skips = triage.duplicates.map: duplicate =>
       PlanItem(
         PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
@@ -67,6 +67,18 @@ object ExpensePlanner:
   // to persist a machine-readable ref for de-duplicating on re-runs.
   def refMarker(ref: ExternalRef): String = s"sfref:${ref.value}"
 
+  // Superfaktura discards the original filename of an attachment, so the comment also carries a
+  // content hash of each uploaded receipt — letting a re-run recognise it without re-OCRing.
+  def receiptMarker(receipt: ReceiptBytes): String =
+    s"sfrcpt:${hex(MessageDigest.getInstance("SHA-256").digest(receipt.value.toArray))}"
+
+  def appendMarker(comment: Option[String], marker: String): Option[String] =
+    if comment.exists(_.contains(marker)) then comment
+    else Some((comment.toList :+ marker).mkString(" "))
+
+  def receiptMarkers(comment: Option[String]): Set[String] =
+    comment.toList.flatMap(_.split("\\s+")).filter(_.startsWith("sfrcpt:")).toSet
+
   def newExpense(ref: ExternalRef, candidate: CandidateExpense): NewExpense =
     NewExpense(
       name = candidate.name,
@@ -89,7 +101,7 @@ object ExpensePlanner:
       case PlanAction.CreateExpense(_, expense, attach) =>
         val attachment = attach.fold("")(receipt => s" + ${receipt.path}")
         s"[$status] create '${expense.name}' ${expense.amount.amount} ${expense.amount.currency}$attachment"
-      case PlanAction.AttachToExisting(expenseId, attachment) =>
+      case PlanAction.AttachToExisting(expenseId, attachment, _) =>
         s"[$status] attach ${attachment.path} to expense ${expenseId.value}"
       case PlanAction.SkipDuplicate(_, reason, matched) =>
         s"[$status] skip duplicate of expense ${matched.value}: $reason"
@@ -97,6 +109,8 @@ object ExpensePlanner:
         s"[$status] needs resolution ($reason); candidates: ${candidates.map(_.value).mkString(", ")}"
       case PlanAction.FlagReceipt(receipt, reason) =>
         s"[$status] flag receipt ${receipt.path}: $reason"
+      case PlanAction.ReceiptAlreadyUploaded(receipt, expense) =>
+        s"[$status] skip ${receipt.path}: already uploaded to expense ${expense.value}"
 
   private def expenseName(transaction: Transaction): String =
     cardMerchant(transaction)
@@ -128,5 +142,7 @@ object ExpensePlanner:
     )
     val canonical = fields.map(field => s"${field.length}:$field").mkString
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8))
-    ExternalRef(digest.map(byte => f"${byte & 0xff}%02x").mkString)
+    ExternalRef(hex(digest))
+
+  private def hex(bytes: Array[Byte]): String = bytes.map(byte => f"${byte & 0xff}%02x").mkString
 end ExpensePlanner

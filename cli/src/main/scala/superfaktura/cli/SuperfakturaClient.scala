@@ -77,7 +77,13 @@ object SuperfakturaClient:
           .liftTo[F]
 
     override def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit] =
-      val body = Json.obj("Expense" := Json.obj("id" := id.value, "attachment" := encode(patch.attachment)))
+      val body = Json.obj(
+        "Expense" := Json.obj(
+          "id" := id.value,
+          "comment" := patch.comment,
+          "attachment" := encode(patch.attachment)
+        )
+      )
       post("expenses/edit", body).void
 
     private def encode(attachment: Option[ReceiptBytes]): Option[String] =

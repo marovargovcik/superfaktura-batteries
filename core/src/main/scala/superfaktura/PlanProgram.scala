@@ -19,9 +19,9 @@ object PlanProgram:
       transactions <- bank.read(csv)
       candidates = ExpensePlanner.toCandidates(transactions)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
-      (received, unreadable) = scanned
-      existing <- listExisting(candidates, received)
-      plan = assemble(candidates, existing, received, unreadable)
+      (receiptPairs, unreadable) = scanned
+      existing <- listExisting(candidates, receiptPairs.map(_._2))
+      plan = assemble(candidates, existing, receiptPairs, unreadable)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
@@ -37,31 +37,42 @@ object PlanProgram:
   private def assemble(
       candidates: List[CandidateExpense],
       existing: List[Expense],
-      received: List[Receipt],
+      receiptPairs: List[(String, Receipt)],
       unreadable: List[ReceiptRef]
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
-    ExpensePlanner.buildPlan(triage, ReceiptMatcher.matchReceipts(received, targets, MatchWindow.default), unreadable)
+    val receipts = receiptPairs.map(_._2)
+    val matched = ReceiptMatcher.matchReceipts(receipts, targets, MatchWindow.default)
+    val markerToExpense = existing.flatMap(expense =>
+      ExpensePlanner.receiptMarkers(expense.comment).map(_ -> expense.id)
+    ).toMap
+    val base = ExpensePlanner.buildPlan(triage, matched, unreadable)
+    val skipped = receiptPairs.mapFilter: (marker, receipt) =>
+      markerToExpense.get(marker).map(expenseId =>
+        PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped)
+      )
+    Plan(base.items ++ skipped)
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F]
-  ): F[(List[Receipt], List[ReceiptRef])] =
+  ): F[(List[(String, Receipt)], List[ReceiptRef])] =
     receiptSource.list(folder).flatMap(_.traverse(readOne)).map: results =>
-      (results.collect { case Right(receipt) => receipt }, results.collect { case Left(ref) => ref })
+      (results.collect { case Right(pair) => pair }, results.collect { case Left(ref) => ref })
 
   private def readOne[F[_]: MonadThrow](file: ReceiptFile)(using
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F]
-  ): F[Either[ReceiptRef, Receipt]] =
+  ): F[Either[ReceiptRef, (String, Receipt)]] =
     AttachmentFormat.of(file.ref).flatMap(_.ocrMedia) match
-      case None => (Left(file.ref): Either[ReceiptRef, Receipt]).pure[F]
+      case None => (Left(file.ref): Either[ReceiptRef, (String, Receipt)]).pure[F]
       case Some(media) =>
         for
           bytes <- receiptSource.load(file.ref)
           result <- ocr.read(bytes, media)
         yield (result.amount, result.date) match
-          case (Some(amount), Some(date)) => Right(Receipt(file.ref, amount, date))
+          case (Some(amount), Some(date)) =>
+            Right((ExpensePlanner.receiptMarker(bytes), Receipt(file.ref, amount, date)))
           case _ => Left(file.ref)
 end PlanProgram

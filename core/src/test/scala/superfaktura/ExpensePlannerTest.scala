@@ -2,6 +2,7 @@ package superfaktura
 
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
+import scodec.bits.ByteVector
 
 import java.time.LocalDate
 
@@ -258,6 +259,34 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
+  "receiptMarker" - {
+    "hashes the bytes, so identical content yields the same marker and different content does not" in {
+      val a = ReceiptBytes(ByteVector(1, 2, 3))
+      val b = ReceiptBytes(ByteVector(1, 2, 3))
+      val c = ReceiptBytes(ByteVector(9, 9, 9))
+
+      ExpensePlanner.receiptMarker(a) shouldBe ExpensePlanner.receiptMarker(b)
+      ExpensePlanner.receiptMarker(a) should startWith("sfrcpt:")
+      ExpensePlanner.receiptMarker(a) should not be ExpensePlanner.receiptMarker(c)
+    }
+  }
+
+  "appendMarker" - {
+    "adds the marker to an existing comment but never duplicates it" in {
+      ExpensePlanner.appendMarker(None, "sfrcpt:x") shouldBe Some("sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r"), "sfrcpt:x") shouldBe Some("sfref:r sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r sfrcpt:x"), "sfrcpt:x") shouldBe Some("sfref:r sfrcpt:x")
+    }
+  }
+
+  "receiptMarkers" - {
+    "extracts only the sfrcpt: tokens, ignoring the ref marker and any other text" in {
+      ExpensePlanner.receiptMarkers(Some("sfref:r sfrcpt:a sfrcpt:b booked")) shouldBe Set("sfrcpt:a", "sfrcpt:b")
+      ExpensePlanner.receiptMarkers(Some("sfref:r")) shouldBe Set.empty
+      ExpensePlanner.receiptMarkers(None) shouldBe Set.empty
+    }
+  }
+
   "render" - {
     "summarises the plan with a header and one line per item, for every action variant" in {
       val plan = Plan(
@@ -270,23 +299,25 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
             ),
             PlanItemStatus.Pending
           ),
-          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf")), PlanItemStatus.Applied),
+          PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"), None), PlanItemStatus.Applied),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("d"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
           PlanItem(
             PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
             PlanItemStatus.Pending
           ),
-          PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped)
+          PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped),
+          PlanItem(PlanAction.ReceiptAlreadyUploaded(ReceiptRef("/z.pdf"), ExpenseId(99)), PlanItemStatus.Skipped)
         )
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 5 item(s)")
+      rendered should include("Plan: 6 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
       rendered should include("skip duplicate of expense 7: already booked")
       rendered should include("needs resolution (ambiguous); candidates: 1, 2")
       rendered should include("flag receipt /y.png: no match")
+      rendered should include("skip /z.pdf: already uploaded to expense 99")
     }
   }
 end ExpensePlannerTest
