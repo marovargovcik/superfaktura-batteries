@@ -34,10 +34,10 @@ object ApplyProgram:
             superfaktura.addExpense(request, Some(bytes)).as(item.copy(status = PlanItemStatus.Applied))
           case None =>
             superfaktura.addExpense(base, None).as(item.copy(status = PlanItemStatus.Applied))
-      case PlanItem(PlanAction.AttachToExisting(expenseId, receipt, note), PlanItemStatus.Pending) =>
+      case PlanItem(PlanAction.AttachToExisting(expenseId, receipt, comment), PlanItemStatus.Pending) =>
         prepare(receipt).flatMap:
           case Some((marker, bytes)) =>
-            val patch = ExpensePatch(Some(bytes), ExpensePlanner.appendMarker(note, marker))
+            val patch = ExpensePatch(Some(bytes), ExpensePlanner.appendMarker(comment, marker))
             superfaktura.editExpense(expenseId, patch).as(item.copy(status = PlanItemStatus.Applied))
           // Unlike a create, the receipt is the whole point here, so one that won't fit fails the item.
           case None => item.copy(status = PlanItemStatus.Failed).pure[F]
@@ -47,9 +47,9 @@ object ApplyProgram:
   private def prepare[F[_]: MonadThrow](receipt: ReceiptRef)(using
       receiptSource: ReceiptSourceAlgebra[F],
       imagePrep: ImagePrepAlgebra[F]
-  ): F[Option[(String, ReceiptBytes)]] =
+  ): F[Option[(ReceiptMarker, ReceiptBytes)]] =
     AttachmentFormat.of(receipt) match
-      case None => Option.empty[(String, ReceiptBytes)].pure[F]
+      case None => Option.empty[(ReceiptMarker, ReceiptBytes)].pure[F]
       case Some(format) =>
         for
           bytes <- receiptSource.load(receipt)

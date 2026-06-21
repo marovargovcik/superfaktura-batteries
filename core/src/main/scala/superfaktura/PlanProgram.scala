@@ -20,7 +20,7 @@ object PlanProgram:
       candidates = ExpensePlanner.toCandidates(transactions)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (receiptPairs, unreadable) = scanned
-      existing <- listExisting(candidates, receiptPairs.map(_._2))
+      existing <- listExisting(candidates, receiptPairs.map { case (_, receipt) => receipt })
       plan = assemble(candidates, existing, receiptPairs, unreadable)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
@@ -37,19 +37,12 @@ object PlanProgram:
   private def assemble(
       candidates: List[CandidateExpense],
       existing: List[Expense],
-      receiptPairs: List[(String, Receipt)],
+      receiptPairs: List[(ReceiptMarker, Receipt)],
       unreadable: List[ReceiptRef]
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
-    val markerToExpense = existing.flatMap(expense =>
-      ExpensePlanner.receiptMarkers(expense.comment).map(_ -> expense.id)
-    ).toMap
-    val (alreadyUploaded, fresh) = receiptPairs.partitionMap: (marker, receipt) =>
-      markerToExpense.get(marker) match
-        case Some(expenseId) =>
-          Left(PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped))
-        case None => Right(receipt)
+    val (alreadyUploaded, fresh) = ExpensePlanner.partitionUploaded(receiptPairs, existing)
     val matched = ReceiptMatcher.matchReceipts(fresh, targets, MatchWindow.default)
     val base = ExpensePlanner.buildPlan(triage, matched, unreadable)
     Plan(base.items ++ alreadyUploaded)
@@ -57,16 +50,16 @@ object PlanProgram:
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F]
-  ): F[(List[(String, Receipt)], List[ReceiptRef])] =
+  ): F[(List[(ReceiptMarker, Receipt)], List[ReceiptRef])] =
     receiptSource.list(folder).flatMap(_.traverse(readOne)).map: results =>
       (results.collect { case Right(pair) => pair }, results.collect { case Left(ref) => ref })
 
   private def readOne[F[_]: MonadThrow](file: ReceiptFile)(using
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F]
-  ): F[Either[ReceiptRef, (String, Receipt)]] =
+  ): F[Either[ReceiptRef, (ReceiptMarker, Receipt)]] =
     AttachmentFormat.of(file.ref).flatMap(_.ocrMedia) match
-      case None => (Left(file.ref): Either[ReceiptRef, (String, Receipt)]).pure[F]
+      case None => (Left(file.ref): Either[ReceiptRef, (ReceiptMarker, Receipt)]).pure[F]
       case Some(media) =>
         for
           bytes <- receiptSource.load(file.ref)

@@ -60,7 +60,7 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
       ApplyProgram.run[IO].unsafeRunSync()
 
       val expected =
-        ExpensePlanner.newExpense(candidate.externalRef, candidate).copy(comment = Some(s"sfref:r1 $marker"))
+        ExpensePlanner.newExpense(candidate.externalRef, candidate).copy(comment = Some(s"sfref:r1 ${marker.value}"))
       added.get.unsafeRunSync() shouldBe List((expected, Some(prepared)))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
         List(PlanItemStatus.Applied, PlanItemStatus.Skipped)
@@ -109,7 +109,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
 
       ApplyProgram.run[IO].unsafeRunSync()
 
-      edited.get.unsafeRunSync() shouldBe List((ExpenseId(7), ExpensePatch(Some(prepared), Some(s"sfref:e7 $marker"))))
+      edited.get.unsafeRunSync() shouldBe
+        List((ExpenseId(7), ExpensePatch(Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
         List(PlanItemStatus.Applied)
     }

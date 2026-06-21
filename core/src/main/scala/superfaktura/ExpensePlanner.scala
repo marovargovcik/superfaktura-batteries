@@ -33,6 +33,8 @@ object ExpensePlanner:
         PlanAction.CreateExpense(candidate.externalRef, candidate, attachByCandidate.get(candidate.externalRef)),
         PlanItemStatus.Pending
       )
+    // `comment` snapshots the expense's note at plan time so apply appends the marker rather than clobbering it;
+    // a concurrent edit between plan and apply is overwritten — accepted for this single-user CLI.
     val attaches = matched.paired.collect:
       case Pairing(receipt, MatchTarget.Existing(expense)) =>
         PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref, expense.comment), PlanItemStatus.Pending)
@@ -57,7 +59,7 @@ object ExpensePlanner:
     }
 
   // The window of existing expenses to fetch: it must cover both the CSV dates (for dedup) and every
-  // date a receipt could attach to (for pairing against existing expenses). Requires a non-empty input.
+  // date a receipt could attach to (for pairing against existing expenses).
   def coverageWindow(candidates: List[CandidateExpense], receipts: List[Receipt], window: MatchWindow): DateWindow =
     val lows = candidates.map(_.occurredOn) ++ receipts.map(_.date.minusDays(window.daysBefore))
     val highs = candidates.map(_.occurredOn) ++ receipts.map(_.date.plusDays(window.daysAfter))
@@ -67,17 +69,29 @@ object ExpensePlanner:
   // to persist a machine-readable ref for de-duplicating on re-runs.
   def refMarker(ref: ExternalRef): String = s"sfref:${ref.value}"
 
-  // Superfaktura discards the original filename of an attachment, so the comment also carries a
-  // content hash of each uploaded receipt — letting a re-run recognise it without re-OCRing.
-  def receiptMarker(receipt: ReceiptBytes): String =
-    s"sfrcpt:${hex(MessageDigest.getInstance("SHA-256").digest(receipt.value.toArray))}"
+  def receiptMarker(receipt: ReceiptBytes): ReceiptMarker =
+    ReceiptMarker.of(hex(MessageDigest.getInstance("SHA-256").digest(receipt.value.toArray)))
 
-  def appendMarker(comment: Option[String], marker: String): Option[String] =
-    if comment.exists(_.contains(marker)) then comment
-    else Some((comment.toList :+ marker).mkString(" "))
+  def appendMarker(comment: Option[String], marker: ReceiptMarker): Option[String] =
+    val tokens = comment.toList.flatMap(_.split("\\s+"))
+    if tokens.contains(marker.value) then comment
+    else Some((comment.toList :+ marker.value).mkString(" "))
 
-  def receiptMarkers(comment: Option[String]): Set[String] =
-    comment.toList.flatMap(_.split("\\s+")).filter(_.startsWith("sfrcpt:")).toSet
+  def receiptMarkers(comment: Option[String]): Set[ReceiptMarker] =
+    comment.toList.flatMap(_.split("\\s+")).flatMap(ReceiptMarker.parse).toSet
+
+  // Split scanned receipts into those already attached to an existing expense (matched by their content-hash
+  // marker recorded in its comment) and the rest that still need pairing.
+  def partitionUploaded(
+      receiptPairs: List[(ReceiptMarker, Receipt)],
+      existing: List[Expense]
+  ): (List[PlanItem], List[Receipt]) =
+    val markerToExpense = existing.flatMap(e => receiptMarkers(e.comment).map(_ -> e.id)).toMap
+    receiptPairs.partitionMap: (marker, receipt) =>
+      markerToExpense.get(marker) match
+        case Some(expenseId) =>
+          Left(PlanItem(PlanAction.ReceiptAlreadyUploaded(receipt.ref, expenseId), PlanItemStatus.Skipped))
+        case None => Right(receipt)
 
   def newExpense(ref: ExternalRef, candidate: CandidateExpense): NewExpense =
     NewExpense(

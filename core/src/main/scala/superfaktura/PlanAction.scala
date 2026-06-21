@@ -5,7 +5,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 
 enum PlanAction:
   case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])
-  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, note: Option[String])
+  case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, comment: Option[String])
   case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
   case FlagReceipt(receipt: ReceiptRef, reason: String)

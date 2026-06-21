@@ -181,7 +181,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val saved = Ref.unsafe[IO, Option[Plan]](None)
       // Marker of the receipt file that will be loaded as ByteVector(1).
       val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
-      val existing = Expense(ExpenseId(20), "PREV", Money(BigDecimal("10.00"), "EUR"), date, Some(receiptMarker))
+      val existing = Expense(ExpenseId(20), "PREV", Money(BigDecimal("10.00"), "EUR"), date, Some(receiptMarker.value))
 
       given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
       given SuperfakturaAlgebra[IO] = lists(List(existing))

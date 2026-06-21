@@ -149,10 +149,12 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
       expense.get[String]("attachment") shouldBe Right(Base64.getEncoder.encodeToString("hi".getBytes))
     }
 
-    "sends a null attachment when the patch has none" in {
+    "sends a null comment and attachment when the patch has none" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
       algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), ExpensePatch(None, None)).unsafeRunSync()
-      captured.get.unsafeRunSync().hcursor.downField("Expense").get[Option[String]]("attachment") shouldBe Right(None)
+      val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
+      expense.get[Option[String]]("comment") shouldBe Right(None)
+      expense.get[Option[String]]("attachment") shouldBe Right(None)
     }
   }
 

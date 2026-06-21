@@ -176,6 +176,16 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 
       ExpensePlanner.coverageWindow(candidates, Nil, MatchWindow.default) shouldBe DateWindow(date, date)
     }
+
+    "spans only the buffered receipt dates when there are no candidates" in {
+      val receipts = List(
+        Receipt(ReceiptRef("r.jpg"), Money(BigDecimal("1.00"), "EUR"), LocalDate.of(2026, 6, 10)),
+        Receipt(ReceiptRef("s.jpg"), Money(BigDecimal("2.00"), "EUR"), LocalDate.of(2026, 6, 20))
+      )
+
+      ExpensePlanner.coverageWindow(Nil, receipts, MatchWindow.default) shouldBe
+        DateWindow(LocalDate.of(2026, 6, 9), LocalDate.of(2026, 6, 23))
+    }
   }
 
   "buildPlan" - {
@@ -266,22 +276,27 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       val c = ReceiptBytes(ByteVector(9, 9, 9))
 
       ExpensePlanner.receiptMarker(a) shouldBe ExpensePlanner.receiptMarker(b)
-      ExpensePlanner.receiptMarker(a) should startWith("sfrcpt:")
+      ExpensePlanner.receiptMarker(a).value should startWith("sfrcpt:")
       ExpensePlanner.receiptMarker(a) should not be ExpensePlanner.receiptMarker(c)
     }
   }
 
   "appendMarker" - {
     "adds the marker to an existing comment but never duplicates it" in {
-      ExpensePlanner.appendMarker(None, "sfrcpt:x") shouldBe Some("sfrcpt:x")
-      ExpensePlanner.appendMarker(Some("sfref:r"), "sfrcpt:x") shouldBe Some("sfref:r sfrcpt:x")
-      ExpensePlanner.appendMarker(Some("sfref:r sfrcpt:x"), "sfrcpt:x") shouldBe Some("sfref:r sfrcpt:x")
+      ExpensePlanner.appendMarker(None, ReceiptMarker("sfrcpt:x")) shouldBe Some("sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfref:r sfrcpt:x")
+      ExpensePlanner.appendMarker(Some("sfref:r sfrcpt:x"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfref:r sfrcpt:x")
+    }
+
+    "matches a recorded marker by whole token, not substring" in {
+      ExpensePlanner.appendMarker(Some("sfrcpt:xyz"), ReceiptMarker("sfrcpt:x")) shouldBe Some("sfrcpt:xyz sfrcpt:x")
     }
   }
 
   "receiptMarkers" - {
     "extracts only the sfrcpt: tokens, ignoring the ref marker and any other text" in {
-      ExpensePlanner.receiptMarkers(Some("sfref:r sfrcpt:a sfrcpt:b booked")) shouldBe Set("sfrcpt:a", "sfrcpt:b")
+      ExpensePlanner.receiptMarkers(Some("sfref:r sfrcpt:a sfrcpt:b booked")) shouldBe
+        Set(ReceiptMarker("sfrcpt:a"), ReceiptMarker("sfrcpt:b"))
       ExpensePlanner.receiptMarkers(Some("sfref:r")) shouldBe Set.empty
       ExpensePlanner.receiptMarkers(None) shouldBe Set.empty
     }
