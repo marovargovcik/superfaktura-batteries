@@ -64,6 +64,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
       )
       val expected =
         ExpensePlanner.newExpense(candidate.externalRef, candidate).copy(comment = Some(s"sfref:r1 ${marker.value}"))
+      given ReceiptSourceAlgebra[IO] = loadsReceipt
+      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.Fitted(prepared))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -71,8 +73,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(loadsReceipt)
-          given ImagePrepAlgebra[IO] <- IO.pure(prep(PreparedAttachment.Fitted(prepared)))
           _ <- ApplyProgram.run[IO]
           recordedAdds <- added.get
           finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -91,6 +91,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
+      given ReceiptSourceAlgebra[IO] = loadsReceipt
+      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.TooLarge("over the cap"))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -98,8 +100,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(loadsReceipt)
-          given ImagePrepAlgebra[IO] <- IO.pure(prep(PreparedAttachment.TooLarge("over the cap")))
           _ <- ApplyProgram.run[IO]
           recordedAdds <- added.get
           finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -118,6 +118,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
+      given ReceiptSourceAlgebra[IO] = loadsReceipt
+      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.Fitted(prepared))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -125,8 +127,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(loadsReceipt)
-          given ImagePrepAlgebra[IO] <- IO.pure(prep(PreparedAttachment.Fitted(prepared)))
           _ <- ApplyProgram.run[IO]
           recordedEdits <- edited.get
           finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -139,6 +139,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
 
     "renames an existing expense, sending only the name" in {
       val plan = Plan(List(PlanItem(PlanAction.RenameExpense(ExpenseId(7), "Rent 16.06.2026"), PlanItemStatus.Pending)))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO] {}
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -146,8 +148,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given ImagePrepAlgebra[IO] <- IO.pure(new ImagePrepAlgebraStub[IO] {})
           _ <- ApplyProgram.run[IO]
           recordedEdits <- edited.get
           finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -163,6 +163,8 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("big.pdf"), None),
           PlanItemStatus.Pending
         )))
+      given ReceiptSourceAlgebra[IO] = loadsReceipt
+      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.TooLarge("over the cap"))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -170,8 +172,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(loadsReceipt)
-          given ImagePrepAlgebra[IO] <- IO.pure(prep(PreparedAttachment.TooLarge("over the cap")))
           _ <- ApplyProgram.run[IO]
           recordedEdits <- edited.get
           finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -190,6 +190,9 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
+      // load/fit left unimplemented (???): the test fails if an Applied item touches them again.
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO] {}
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
@@ -197,9 +200,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
           given PlanStore[IO] <- IO.pure(planStore(plan, saved))
           given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
-          // load/fit left unimplemented (???): the test fails if an Applied item touches them again.
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given ImagePrepAlgebra[IO] <- IO.pure(new ImagePrepAlgebraStub[IO] {})
           _ <- ApplyProgram.run[IO]
           recordedAdds <- added.get
         yield recordedAdds shouldBe empty

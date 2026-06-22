@@ -53,6 +53,28 @@ class IdempotencyRoundTripTest extends AnyFreeSpec with Matchers:
   private val ruleFileMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(2, 2, 2)))
 
   "running plan/apply repeatedly across csv, then +receipts, then +rules converges" in {
+    given BankStatementSourceAlgebra[IO] = new BankStatementSourceAlgebraStub[IO]:
+      override def read(path: Path): IO[List[Transaction]] = IO.pure(List(landlord))
+
+    given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
+      override def list(folder: Path): IO[List[ReceiptFile]] = IO.pure(List(ReceiptFile(receiptPath, 100L)))
+      override def exists(ref: ReceiptRef): IO[Boolean] = IO.pure(true)
+      override def load(ref: ReceiptRef): IO[ReceiptBytes] = ref match
+        case `receiptPath` => IO.pure(ReceiptBytes(ByteVector(1, 1, 1)))
+        case `ruleFile` => IO.pure(ReceiptBytes(ByteVector(2, 2, 2)))
+        case other => IO.raiseError(new IllegalStateException(s"unexpected load: ${other.path}"))
+
+    given OcrAlgebra[IO] = new OcrAlgebraStub[IO]:
+      override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
+        IO.pure(OcrResult(Some(Money(BigDecimal("450.00"), "EUR")), Some(date)))
+
+    given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO]:
+      override def fit(attachment: ReceiptBytes, format: AttachmentFormat): IO[PreparedAttachment] =
+        IO.pure(PreparedAttachment.Fitted(attachment))
+
+    given ReporterAlgebra[IO] = new ReporterAlgebraStub[IO]:
+      override def summary(plan: Plan): IO[Unit] = IO.unit
+
     val test =
       for
         store <- Ref.of[IO, List[Expense]](Nil)
@@ -61,9 +83,6 @@ class IdempotencyRoundTripTest extends AnyFreeSpec with Matchers:
         edits <- Ref.of[IO, Int](0)
         activeRules <- Ref.of[IO, RuleSet](RuleSet.empty)
         savedPlan <- Ref.of[IO, Plan](Plan(Nil))
-        given BankStatementSourceAlgebra[IO] <- IO.pure(new BankStatementSourceAlgebraStub[IO]:
-          override def read(path: Path): IO[List[Transaction]] = IO.pure(List(landlord))
-        )
         given SuperfakturaAlgebra[IO] <- IO.pure(new SuperfakturaAlgebraStub[IO]:
           override def listExpenses(window: DateWindow): IO[List[Expense]] = store.get
           override def addExpense(request: NewExpense, attachment: Option[ReceiptBytes]): IO[ExpenseId] =
@@ -79,28 +98,9 @@ class IdempotencyRoundTripTest extends AnyFreeSpec with Matchers:
               else expense
             })
         )
-        given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO]:
-          override def list(folder: Path): IO[List[ReceiptFile]] = IO.pure(List(ReceiptFile(receiptPath, 100L)))
-          override def exists(ref: ReceiptRef): IO[Boolean] = IO.pure(true)
-          override def load(ref: ReceiptRef): IO[ReceiptBytes] = ref match
-            case `receiptPath` => IO.pure(ReceiptBytes(ByteVector(1, 1, 1)))
-            case `ruleFile` => IO.pure(ReceiptBytes(ByteVector(2, 2, 2)))
-            case other => IO.raiseError(new IllegalStateException(s"unexpected load: ${other.path}"))
-        )
-        given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO]:
-          override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
-            IO.pure(OcrResult(Some(Money(BigDecimal("450.00"), "EUR")), Some(date)))
-        )
-        given ImagePrepAlgebra[IO] <- IO.pure(new ImagePrepAlgebraStub[IO]:
-          override def fit(attachment: ReceiptBytes, format: AttachmentFormat): IO[PreparedAttachment] =
-            IO.pure(PreparedAttachment.Fitted(attachment))
-        )
         given PlanStore[IO] <- IO.pure(new PlanStoreStub[IO]:
           override def save(plan: Plan): IO[Unit] = savedPlan.set(plan)
           override def load: IO[Plan] = savedPlan.get
-        )
-        given ReporterAlgebra[IO] <- IO.pure(new ReporterAlgebraStub[IO]:
-          override def summary(plan: Plan): IO[Unit] = IO.unit
         )
         given RuleStore[IO] <- IO.pure(new RuleStore[IO]:
           override def load: IO[RuleSet] = activeRules.get

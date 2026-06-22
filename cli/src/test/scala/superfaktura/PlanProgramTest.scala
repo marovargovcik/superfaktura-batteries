@@ -78,23 +78,20 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
         debit("73.71", Some("423473******7299 BA MAREK 20260613 16:13:59 73.71EUR SHELL 8203"), "GP NÁKUP POS")
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
       val shellRef = ExpensePlanner.toCandidates(List(card)).head.externalRef
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(card, transfer))
+      given SuperfakturaAlgebra[IO] =
+        lists(List(Expense(
+          ExpenseId(9),
+          "SHELL",
+          Money(BigDecimal("73.71"), "EUR"),
+          date,
+          Some(ExpensePlanner.refMarker(shellRef))
+        )))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(card, transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(
-            lists(
-              List(Expense(
-                ExpenseId(9),
-                "SHELL",
-                Money(BigDecimal("73.71"), "EUR"),
-                date,
-                Some(ExpensePlanner.refMarker(shellRef))
-              ))
-            )
-          )
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -110,13 +107,13 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "attaches a matched receipt to the new expense it pairs with" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("orange.jpg")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("orange.jpg"))))
-          given OcrAlgebra[IO] <- IO.pure(ocrReturning("45.45", date.minusDays(1)))
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -131,13 +128,13 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val ref = ExpensePlanner.toCandidates(List(transfer)).head.externalRef
       val existing =
         Expense(ExpenseId(5), "UHRADA", Money(BigDecimal("45.45"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("inv.pdf"))))
-          given OcrAlgebra[IO] <- IO.pure(ocrReturning("45.45", date.minusDays(1)))
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
@@ -153,17 +150,16 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "flags a HEIC receipt as unreadable without loading it or calling OCR" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      // load and OCR are left as ??? — a HEIC must reach neither.
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
+        override def list(folder: Path): IO[List[ReceiptFile]] =
+          IO.pure(List(ReceiptFile(ReceiptRef("photo.heic"), 100L)))
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          // load and OCR are left as ??? — a HEIC must reach neither.
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO]:
-            override def list(folder: Path): IO[List[ReceiptFile]] =
-              IO.pure(List(ReceiptFile(ReceiptRef("photo.heic"), 100L)))
-          )
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -175,16 +171,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "flags a receipt whose OCR could not read both amount and date" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("partial.jpg")))
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO]:
+        override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
+          IO.pure(OcrResult(Some(Money(BigDecimal("45.45"), "EUR")), None))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("partial.jpg"))))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO]:
-            override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
-              IO.pure(OcrResult(Some(Money(BigDecimal("45.45"), "EUR")), None))
-          )
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -196,13 +191,13 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "flags a receipt that matches no expense" in {
       val transfer = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("mystery.png")))
+      given OcrAlgebra[IO] = ocrReturning("999.99", date)
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("mystery.png"))))
-          given OcrAlgebra[IO] <- IO.pure(ocrReturning("999.99", date))
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
@@ -217,13 +212,13 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       // Marker of the receipt file that will be loaded as ByteVector(1).
       val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
       val existing = Expense(ExpenseId(20), "PREV", Money(BigDecimal("10.00"), "EUR"), date, Some(receiptMarker.value))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("orange.jpg")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("orange.jpg"))))
-          given OcrAlgebra[IO] <- IO.pure(ocrReturning("45.45", date.minusDays(1)))
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
@@ -241,13 +236,13 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val receiptMarker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
       val comment = ExpensePlanner.appendMarker(Some(ExpensePlanner.refMarker(ref)), receiptMarker)
       val existing = Expense(ExpenseId(7), "UHRADA", Money(BigDecimal("45.45"), "EUR"), date, comment)
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(transfer))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = receiptsFolder(List(ReceiptRef("inv.pdf")))
+      given OcrAlgebra[IO] = ocrReturning("45.45", date.minusDays(1))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(transfer)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(receiptsFolder(List(ReceiptRef("inv.pdf"))))
-          given OcrAlgebra[IO] <- IO.pure(ocrReturning("45.45", date.minusDays(1)))
           given PlanStore[IO] <- IO.pure(savedBy(saved))
           _ <- PlanProgram.run[IO](csvPath, receiptsPath)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
@@ -262,15 +257,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
     "renames a matching transaction using the rule template, leaving others on their derived name" in {
       val rent = debit("450.00", Some("LANDLORD"), "Platba 8180")
       val other = debit("45.45", Some("UHRADA POISTNEHO"), "Platba 9000")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent, other))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent, other)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None)))
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
         yield plan.items.collect {
@@ -281,17 +276,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "attaches a rule's fixed file to the new expense it matches, without scanning receipts" in {
       val rent = debit("450.00", Some("LANDLORD"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(attachmentsExist(present = true))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(
-            rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
-          )
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
         yield plan.items.collect {
@@ -302,17 +295,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
     "flags a rule attachment whose file is missing, and creates the expense without it" in {
       val rent = debit("450.00", Some("LANDLORD"), "Platba 8180")
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = false)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(Nil))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(attachmentsExist(present = false))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(
-            rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
-          )
           _ <- PlanProgram.run[IO](csvPath, None)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
         yield
@@ -330,15 +321,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
       val existing =
         Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None)))
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
         yield plan.items.collect {
@@ -357,15 +348,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
         date,
         Some(ExpensePlanner.refMarker(ref))
       )
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(new ReceiptSourceAlgebraStub[IO] {})
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None)))
           _ <- PlanProgram.run[IO](csvPath, None)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
         yield
@@ -379,17 +370,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
       val existing =
         Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(attachmentsExist(present = true))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(
-            rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
-          )
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
         yield plan.items.collect {
@@ -404,17 +393,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val marker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
       val comment = ExpensePlanner.appendMarker(Some(ExpensePlanner.refMarker(ref)), marker)
       val existing = Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, comment)
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(attachmentsExist(present = true))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(
-            rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
-          )
           _ <- PlanProgram.run[IO](csvPath, None)
           plan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
         yield plan.items.collect {
@@ -428,17 +415,15 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
       val existing =
         Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = false)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
       val test =
         for
           saved <- Ref.of[IO, Option[Plan]](None)
-          given BankStatementSourceAlgebra[IO] <- IO.pure(bankReturning(List(rent)))
-          given SuperfakturaAlgebra[IO] <- IO.pure(lists(List(existing)))
-          given ReceiptSourceAlgebra[IO] <- IO.pure(attachmentsExist(present = false))
-          given OcrAlgebra[IO] <- IO.pure(new OcrAlgebraStub[IO] {})
           given PlanStore[IO] <- IO.pure(savedBy(saved))
-          given RuleStore[IO] <- IO.pure(
-            rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
-          )
           _ <- PlanProgram.run[IO](csvPath, None)
           items <- saved.get.map(_.getOrElse(fail("plan was not saved")).items)
         yield
