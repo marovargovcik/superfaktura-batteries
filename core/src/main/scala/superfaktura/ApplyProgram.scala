@@ -48,10 +48,14 @@ object ApplyProgram:
       case PlanItem(PlanAction.AttachToExisting(expenseId, receipt, comment), PlanItemStatus.Pending) =>
         prepare(receipt).flatMap:
           case Some((marker, bytes)) =>
-            val patch = ExpensePatch(Some(bytes), ExpensePlanner.appendMarker(comment, marker))
+            val patch = ExpensePatch(None, Some(bytes), ExpensePlanner.appendMarker(comment, marker))
             superfaktura.editExpense(expenseId, patch).as(item.copy(status = PlanItemStatus.Applied))
           // Unlike a create, the receipt is the whole point here, so one that won't fit fails the item.
           case None => item.copy(status = PlanItemStatus.Failed).pure[F]
+      case PlanItem(PlanAction.RenameExpense(expenseId, name), PlanItemStatus.Pending) =>
+        superfaktura
+          .editExpense(expenseId, ExpensePatch(Some(name), None, None))
+          .as(item.copy(status = PlanItemStatus.Applied))
       case other => other.pure[F]
 
   // Loads the receipt and fits it under the attachment cap; None means it could not be made to fit.

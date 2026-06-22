@@ -144,20 +144,35 @@ class SuperfakturaClientTest extends AnyFreeSpec with Matchers:
   "editExpense" - {
     "posts the id, the comment, and the base64-encoded attachment" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
-      val patch = ExpensePatch(Some(ReceiptBytes(ByteVector("hi".getBytes))), Some("sfref:r sfrcpt:abc"))
+      val patch = ExpensePatch(None, Some(ReceiptBytes(ByteVector("hi".getBytes))), Some("sfref:r sfrcpt:abc"))
       algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), patch).unsafeRunSync()
       val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
       expense.get[Long]("id") shouldBe Right(42)
       expense.get[String]("comment") shouldBe Right("sfref:r sfrcpt:abc")
       expense.get[String]("attachment") shouldBe Right(Base64.getEncoder.encodeToString("hi".getBytes))
+      expense.downField("name").succeeded shouldBe false
     }
 
-    "sends a null comment and attachment when the patch has none" in {
+    "sends only the new name when renaming, leaving attachment and comment untouched" in {
       val captured = Ref.unsafe[IO, Json](Json.Null)
-      algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), ExpensePatch(None, None)).unsafeRunSync()
+      val patch = ExpensePatch(Some("Rent 16.06.2026"), None, None)
+      algebra(capturing(captured, """{"error":0}""")).editExpense(ExpenseId(42), patch).unsafeRunSync()
       val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
-      expense.get[Option[String]]("comment") shouldBe Right(None)
-      expense.get[Option[String]]("attachment") shouldBe Right(None)
+      expense.get[String]("name") shouldBe Right("Rent 16.06.2026")
+      expense.downField("attachment").succeeded shouldBe false
+      expense.downField("comment").succeeded shouldBe false
+    }
+
+    "omits every optional field when the patch is empty" in {
+      val captured = Ref.unsafe[IO, Json](Json.Null)
+      algebra(capturing(captured, """{"error":0}"""))
+        .editExpense(ExpenseId(42), ExpensePatch(None, None, None))
+        .unsafeRunSync()
+      val expense = captured.get.unsafeRunSync().hcursor.downField("Expense")
+      expense.get[Long]("id") shouldBe Right(42)
+      expense.downField("name").succeeded shouldBe false
+      expense.downField("comment").succeeded shouldBe false
+      expense.downField("attachment").succeeded shouldBe false
     }
   }
 

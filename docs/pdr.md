@@ -161,7 +161,9 @@ Response: `{ data: { Expense: { id, ... } }, error, error_message, status }`. Ne
 Therefore:
 
 - **Create + attach** = one `POST /expenses/add` with `attachment`.
-- **Attach to existing** = `POST /expenses/edit` with the expense `id` + `attachment`.
+- **Edit existing** = `POST /expenses/edit` with the expense `id` plus only the fields being changed — `attachment`
+  (attach to an existing expense) and/or `name` (a rule renaming an already-booked expense). Fields left out are not
+  sent, so an edit never clears the others.
 
 ### List/search expenses (for dedup) — `GET /expenses/index.json/...`
 
@@ -293,16 +295,24 @@ Semantics:
 - **Match target.** Name conditions match against the *derived* expense name (the same string shown in the plan, after
   the card-merchant/recipient/description derivation), so rules are written against what the user reviews.
 - **First match wins.** Rules are tried in file order; the first matching rule applies, the rest are ignored.
-- **Rename.** `rename` is a template; `{date}` is replaced with the transaction date as `dd.MM.yyyy`. The rewrite
-  affects only the human-visible name — the external ref still hashes the raw CSV fields, so **renaming never changes
-  de-duplication** on re-runs.
-- **Attach.** `attach` is an explicit filesystem path (not relative to `--receipts`); the file is uploaded by `apply`
-  through the normal create-attachment path. A rule attachment **wins over an OCR-paired receipt** for the same
-  expense. Because the path is arbitrary (unlike OCR receipts, which are always real files in the scanned folder), its
-  existence is checked at plan time: a missing file becomes a `FlagReceipt` item rather than failing the later `apply`.
+- **Rename.** `rename` is a template; `{date}` is replaced with the transaction date as `dd.MM.yyyy`. It applies whether
+  the expense is being created or is **already booked**: for an already-booked transaction (a duplicate matched by its
+  `sfref:` marker) a `RenameExpense` edit is emitted only when the rule's name differs from the name Superfaktura holds,
+  so the rule name is authoritative (a manual rename in the web UI is rewritten back) and re-runs converge. Renaming
+  only touches the human-visible name — the external ref still hashes the raw CSV fields, so **de-duplication is never
+  affected**.
+- **Attach.** `attach` is an explicit filesystem path (not relative to `--receipts`); `apply` uploads it through
+  `/expenses/edit`. For a new expense it rides the create call and **wins over an OCR-paired receipt** for the same
+  expense; for an already-booked expense the file is attached via `AttachToExisting` unless its content-hash marker is
+  already recorded in the expense's comment (so re-runs never re-upload). Because the path is arbitrary (unlike OCR
+  receipts, which are always real files in the scanned folder), a missing file becomes a `FlagReceipt` item rather than
+  failing the later `apply`.
 
-Rules reuse the existing `PlanAction` shapes — a renamed/attached expense is still a `CreateExpense`, a missing
-attachment is a `FlagReceipt` — so the plan model and `apply` are unchanged.
+Rules add a single `PlanAction` — `RenameExpense` — and otherwise reuse the existing shapes (`CreateExpense` for a
+new expense, `AttachToExisting` for attaching to an existing one, `FlagReceipt` for a missing file), so `apply` stays
+a thin executor. Every effect is gated on a diff against the current Superfaktura state, so rules are **idempotent and
+apply regardless of which inputs earlier runs used** — create the expense first, attach receipts in a later run, add
+rules in a later run still; each run reconciles and a repeated run is a no-op.
 
 ```json
 {
@@ -697,6 +707,10 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   external ref untouched (dedup unaffected); a rule attachment beats an OCR-paired receipt; a missing attachment path
   is flagged at plan time. Modelled as a small ADT loaded via `RuleStore`/`FileRuleStore`, mirroring `PlanStore`
   (chosen over passing a plain `RuleSet` value for consistency with the existing file-backed store pattern).
+- **Rules also apply to already-booked expenses** — a rule's rename/attach is not limited to creation. A duplicate is
+  renamed (`RenameExpense` edit) when the rule's name differs from Superfaktura's, and a rule's fixed file is attached
+  to an existing expense unless its content-hash marker is already on it. The rule name is authoritative (clobbers a
+  manual rename); each effect is gated on a diff, so rules are idempotent regardless of which inputs prior runs used.
 
 ## Still open
 
@@ -728,6 +742,9 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   `RuleStore`/`FileRuleStore`; `RuleMatch` ADT (exact/partial name, exact recipient IBAN); first-match rename with a
   `{date}` template (external ref unchanged) and explicit fixed attachments that beat OCR pairings, with missing paths
   flagged at plan time. See [Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules).
+- **M2.6 — Rules on already-booked expenses (done):** rules also reconcile existing Superfaktura expenses — a
+  `RenameExpense` edit when the rule's name differs, and `AttachToExisting` for a rule's fixed file not yet recorded
+  (content-hash marker check) — so rules are idempotent across runs that mixed `--csv`, `--receipts`, and `--rules`.
 - **M3 — Interactive TUI (future):** introduces `CorrectionStrategyAlgebra[F]` + a TUI interpreter over the existing
   plan model.
 

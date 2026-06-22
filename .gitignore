@@ -16,3 +16,9 @@ project/project/
 .scala-build/
 .idea/
 .vscode/
+
+# SemanticDB output (Metals)
+*.semanticdb
+
+# Generated run output (a plan is written per run, never committed)
+plan.json

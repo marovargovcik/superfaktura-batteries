@@ -71,17 +71,17 @@ object SuperfakturaClient:
           .liftTo[F]
 
     override def editExpense(id: ExpenseId, patch: ExpensePatch): F[Unit] =
-      val body = Json.obj(
-        "Expense" := Json.obj(
-          "id" := id.value,
-          "comment" := patch.comment,
-          "attachment" := encode(patch.attachment)
-        )
-      )
-      post("expenses/edit", body).void
+      // Only the fields we intend to change are sent — `/expenses/edit` would otherwise treat an omitted-vs-null
+      // distinction unpredictably, and a rename must not clear the attachment/comment (or vice versa).
+      val fields = List("id" := id.value) ++
+        patch.name.map("name" := _) ++
+        patch.comment.map("comment" := _) ++
+        patch.attachment.map(bytes => "attachment" := encodeBytes(bytes))
+      post("expenses/edit", Json.obj("Expense" := Json.obj(fields*))).void
 
-    private def encode(attachment: Option[ReceiptBytes]): Option[String] =
-      attachment.map(bytes => Base64.getEncoder.encodeToString(bytes.value.toArray))
+    private def encode(attachment: Option[ReceiptBytes]): Option[String] = attachment.map(encodeBytes)
+
+    private def encodeBytes(bytes: ReceiptBytes): String = Base64.getEncoder.encodeToString(bytes.value.toArray)
 
     private def get(path: String): F[Json] =
       resolve(path).flatMap(uri => runChecked(Request[F](Method.GET, uri).putHeaders(authHeader)))

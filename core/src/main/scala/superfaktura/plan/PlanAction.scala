@@ -10,6 +10,7 @@ enum PlanAction:
   case CreateExpense(ref: ExternalRef, expense: CandidateExpense, attach: Option[ReceiptRef])
   case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef, comment: Option[String])
   case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
+  case RenameExpense(expenseId: ExpenseId, name: String)
   case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String)
   case FlagReceipt(receipt: ReceiptRef, reason: String)
   case ReceiptAlreadyUploaded(receipt: ReceiptRef, expense: ExpenseId)

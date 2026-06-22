@@ -39,13 +39,22 @@ object ExpensePlanner:
         matchedRule(transaction, rules).flatMap(_.attach).map(path => externalRef(transaction) -> ReceiptRef(path))
       .toMap
 
+  def ruleRenames(transactions: List[Transaction], rules: RuleSet): Map[ExternalRef, String] =
+    transactions
+      .filter(_.direction == TransactionType.Debit)
+      .flatMap: transaction =>
+        matchedRule(transaction, rules)
+          .flatMap(_.rename)
+          .map(template => externalRef(transaction) -> Rules.renderName(template, transaction.date))
+      .toMap
+
   def flagMissingAttachments(missing: List[ReceiptRef]): List[PlanItem] =
     missing.map(ref => PlanItem(PlanAction.FlagReceipt(ref, "rule attachment file not found"), PlanItemStatus.Skipped))
 
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
       existing.find(matchesRef(candidate, _)) match
-        case Some(expense) => Left(Duplicate(candidate, expense.id, "matching external ref already in Superfaktura"))
+        case Some(expense) => Left(Duplicate(candidate, expense, "matching external ref already in Superfaktura"))
         case None => Right(candidate)
     Triage(toCreate, duplicates)
 
@@ -55,7 +64,8 @@ object ExpensePlanner:
       triage: Triage,
       matched: MatchResult,
       unreadableReceipts: List[ReceiptRef],
-      ruleAttachments: Map[ExternalRef, ReceiptRef] = Map.empty
+      ruleAttachments: Map[ExternalRef, ReceiptRef] = Map.empty,
+      ruleRenames: Map[ExternalRef, String] = Map.empty
   ): Plan =
     // A rule's fixed attachment wins over an OCR-paired receipt for the same candidate.
     val attachByCandidate = matched.paired.collect {
@@ -71,12 +81,18 @@ object ExpensePlanner:
     val attaches = matched.paired.collect:
       case Pairing(receipt, MatchTarget.Existing(expense)) =>
         PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref, expense.comment), PlanItemStatus.Pending)
+    // An already-booked transaction is renamed only when a rule's name differs from what Superfaktura holds;
+    // otherwise it stays a no-op skip, so re-runs converge.
     val skips = triage.duplicates.map: duplicate =>
-      PlanItem(
-        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
-        PlanItemStatus.Skipped
-      )
+      ruleRenames.get(duplicate.candidate.externalRef).filter(_ != duplicate.existing.name) match
+        case Some(name) => PlanItem(PlanAction.RenameExpense(duplicate.existing.id, name), PlanItemStatus.Pending)
+        case None =>
+          PlanItem(
+            PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existing.id),
+            PlanItemStatus.Skipped
+          )
     Plan(creates ++ attaches ++ skips ++ receiptFlags(matched, unreadableReceipts))
+  end buildPlan
 
   private def receiptFlags(matched: MatchResult, unreadableReceipts: List[ReceiptRef]): List[PlanItem] =
     val unmatched =
@@ -152,6 +168,8 @@ object ExpensePlanner:
         s"[$status] attach ${attachment.path} to expense ${expenseId.value}"
       case PlanAction.SkipDuplicate(_, reason, matched) =>
         s"[$status] skip duplicate of expense ${matched.value}: $reason"
+      case PlanAction.RenameExpense(expenseId, name) =>
+        s"[$status] rename expense ${expenseId.value} to '$name'"
       case PlanAction.NeedsResolution(_, candidates, reason) =>
         s"[$status] needs resolution ($reason); candidates: ${candidates.map(_.value).mkString(", ")}"
       case PlanAction.FlagReceipt(receipt, reason) =>

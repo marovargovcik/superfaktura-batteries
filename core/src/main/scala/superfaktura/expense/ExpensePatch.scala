@@ -2,4 +2,4 @@ package superfaktura.expense
 
 import superfaktura.receipt.ReceiptBytes
 
-case class ExpensePatch(attachment: Option[ReceiptBytes], comment: Option[String])
+case class ExpensePatch(name: Option[String], attachment: Option[ReceiptBytes], comment: Option[String])
