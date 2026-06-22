@@ -52,6 +52,10 @@ object ApplyProgram:
             superfaktura.editExpense(expenseId, patch).as(item.copy(status = PlanItemStatus.Applied))
           // Unlike a create, the receipt is the whole point here, so one that won't fit fails the item.
           case None => item.copy(status = PlanItemStatus.Failed).pure[F]
+      case PlanItem(PlanAction.RenameExpense(expenseId, name), PlanItemStatus.Pending) =>
+        superfaktura
+          .editExpense(expenseId, ExpensePatch(Some(name), None, None))
+          .as(item.copy(status = PlanItemStatus.Applied))
       case other => other.pure[F]
 
   // Loads the receipt and fits it under the attachment cap; None means it could not be made to fit.

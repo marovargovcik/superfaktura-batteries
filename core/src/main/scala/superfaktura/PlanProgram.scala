@@ -34,12 +34,14 @@ object PlanProgram:
       rules <- ruleStore.load
       transactions <- bank.read(csv)
       candidates = ExpensePlanner.toCandidates(transactions, rules)
+      ruleRenames = ExpensePlanner.ruleRenames(transactions, rules)
       (presentAttachments, missingAttachments) <-
         resolveRuleAttachments(ExpensePlanner.ruleAttachments(transactions, rules))
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (receiptPairs, unreadable) = scanned
       existing <- listExisting(candidates, receiptPairs.map { case (_, receipt) => receipt })
-      plan = assemble(candidates, existing, receiptPairs, unreadable, presentAttachments, missingAttachments)
+      plan =
+        assemble(candidates, existing, receiptPairs, unreadable, presentAttachments, missingAttachments, ruleRenames)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
@@ -58,13 +60,14 @@ object PlanProgram:
       receiptPairs: List[(ReceiptMarker, Receipt)],
       unreadable: List[ReceiptRef],
       ruleAttachments: Map[ExternalRef, ReceiptRef],
-      missingAttachments: List[ReceiptRef]
+      missingAttachments: List[ReceiptRef],
+      ruleRenames: Map[ExternalRef, String]
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
     val (alreadyUploaded, fresh) = ExpensePlanner.partitionUploaded(receiptPairs, existing)
     val matched = ReceiptMatcher.matchReceipts(fresh, targets, MatchWindow.default)
-    val base = ExpensePlanner.buildPlan(triage, matched, unreadable, ruleAttachments)
+    val base = ExpensePlanner.buildPlan(triage, matched, unreadable, ruleAttachments, ruleRenames)
     Plan(base.items ++ alreadyUploaded ++ ExpensePlanner.flagMissingAttachments(missingAttachments))
 
   // A rule names an explicit attachment path; one that no longer exists is flagged here rather than

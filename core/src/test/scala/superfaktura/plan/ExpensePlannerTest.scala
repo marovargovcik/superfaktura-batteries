@@ -162,6 +162,16 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
+  "ruleRenames" - {
+    "maps a debit's external ref to the rendered rule name" in {
+      val rent =
+        tx(direction = TransactionType.Debit, amount = "450.00", recipientInfo = Some("LANDLORD"), description = "x")
+      val rules = RuleSet(List(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None)))
+
+      ExpensePlanner.ruleRenames(List(rent), rules) shouldBe Map(refOf(rent) -> "Rent 19.06.2026")
+    }
+  }
+
   "triage" - {
     "splits candidates into ref-matched duplicates and fresh creates, preserving order" in {
       val card = tx(
@@ -282,6 +292,26 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
           PlanItem(PlanAction.CreateExpense(ExternalRef("r1"), fresh, None), PlanItemStatus.Pending),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("r2"), "dup", ExpenseId(9)), PlanItemStatus.Skipped)
         )
+      )
+    }
+
+    "renames a duplicate only when a rule's name differs from the existing expense" in {
+      val toRename = CandidateExpense(ExternalRef("r1"), "X", Money(BigDecimal("1.00"), "EUR"), date)
+      val alreadyNamed = CandidateExpense(ExternalRef("r2"), "Y", Money(BigDecimal("2.00"), "EUR"), date)
+      val noRule = CandidateExpense(ExternalRef("r3"), "Z", Money(BigDecimal("3.00"), "EUR"), date)
+      val e1 = Expense(ExpenseId(1), "OLD", Money(BigDecimal("1.00"), "EUR"), date, None)
+      val e2 = Expense(ExpenseId(2), "Rent", Money(BigDecimal("2.00"), "EUR"), date, None)
+      val e3 = Expense(ExpenseId(3), "Z", Money(BigDecimal("3.00"), "EUR"), date, None)
+      val triage = Triage(
+        Nil,
+        List(Duplicate(toRename, e1, "dup"), Duplicate(alreadyNamed, e2, "dup"), Duplicate(noRule, e3, "dup"))
+      )
+      val renames = Map(ExternalRef("r1") -> "Rent", ExternalRef("r2") -> "Rent")
+
+      ExpensePlanner.buildPlan(triage, MatchResult.empty, Nil, Map.empty, renames).items shouldBe List(
+        PlanItem(PlanAction.RenameExpense(ExpenseId(1), "Rent"), PlanItemStatus.Pending),
+        PlanItem(PlanAction.SkipDuplicate(ExternalRef("r2"), "dup", ExpenseId(2)), PlanItemStatus.Skipped),
+        PlanItem(PlanAction.SkipDuplicate(ExternalRef("r3"), "dup", ExpenseId(3)), PlanItemStatus.Skipped)
       )
     }
 
@@ -421,6 +451,7 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
           ),
           PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"), None), PlanItemStatus.Applied),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("d"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
+          PlanItem(PlanAction.RenameExpense(ExpenseId(8), "Rent 16.06.2026"), PlanItemStatus.Pending),
           PlanItem(
             PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
             PlanItemStatus.Pending
@@ -431,10 +462,11 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 6 item(s)")
+      rendered should include("Plan: 7 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
       rendered should include("skip duplicate of expense 7: already booked")
+      rendered should include("rename expense 8 to 'Rent 16.06.2026'")
       rendered should include("needs resolution (ambiguous); candidates: 1, 2")
       rendered should include("flag receipt /y.png: no match")
       rendered should include("skip /z.pdf: already uploaded to expense 99")

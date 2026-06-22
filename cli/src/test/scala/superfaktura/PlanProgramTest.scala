@@ -301,5 +301,52 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
         ReceiptRef("/invoices/gone.pdf")
       )
     }
+
+    "renames an already-booked expense when a rule's name differs from Superfaktura" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba")
+      val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
+      val existing =
+        Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.RenameExpense(id, name), _) => id -> name
+      } shouldBe List(ExpenseId(5) -> "Rent 16.06.2026")
+    }
+
+    "leaves an already-booked expense alone when its name already matches the rule" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba")
+      val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
+      val existing = Expense(
+        ExpenseId(5),
+        "Rent 16.06.2026",
+        Money(BigDecimal("450.00"), "EUR"),
+        date,
+        Some(ExpensePlanner.refMarker(ref))
+      )
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.RenameExpense(_, _), _) => () } shouldBe empty
+      items.collect { case PlanItem(PlanAction.SkipDuplicate(_, _, id), _) => id } shouldBe List(ExpenseId(5))
+    }
   }
 end PlanProgramTest

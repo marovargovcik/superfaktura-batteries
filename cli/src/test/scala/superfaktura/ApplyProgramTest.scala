@@ -128,6 +128,23 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
         List(PlanItemStatus.Applied)
     }
 
+    "renames an existing expense, sending only the name" in {
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+      val plan = Plan(List(PlanItem(PlanAction.RenameExpense(ExpenseId(7), "Rent 16.06.2026"), PlanItemStatus.Pending)))
+      given PlanStore[IO] = planStore(plan, saved)
+      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO] {}
+
+      ApplyProgram.run[IO].unsafeRunSync()
+
+      edited.get.unsafeRunSync() shouldBe List((ExpenseId(7), ExpensePatch(Some("Rent 16.06.2026"), None, None)))
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
+        List(PlanItemStatus.Applied)
+    }
+
     "fails an attach-to-existing when the receipt cannot be made to fit" in {
       val saved = Ref.unsafe[IO, Option[Plan]](None)
       val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
