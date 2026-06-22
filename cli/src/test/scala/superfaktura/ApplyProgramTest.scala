@@ -123,7 +123,7 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
       ApplyProgram.run[IO].unsafeRunSync()
 
       edited.get.unsafeRunSync() shouldBe
-        List((ExpenseId(7), ExpensePatch(Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
+        List((ExpenseId(7), ExpensePatch(None, Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
         List(PlanItemStatus.Applied)
     }

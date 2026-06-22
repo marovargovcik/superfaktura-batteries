@@ -1,0 +1,169 @@
+{
+  "items" : [
+    {
+      "action" : {
+        "ref" : "6f77443e8102fcd6b08d2a8946a26cd622af84790b951d898adf341ec7e669eb",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844956,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "70aa9359043d4102ed7a898ee22645915bb84b830914484a2c8ab9f7f99ede07",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844957,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "44e72eb2099a1b616e60862e36f4ce917e4df5793a7fd64b684acd761db742f6",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844958,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "fdcefe05f2fb722e2428ca5d4248ae82d8e1bc5c063b15f4ca2955755ea8a9f7",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844959,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "2ffcdf2ef5aee02dfc2fc2ae75512394e1c5090d8f56381a8793cf450ebd9622",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842084,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "8e8f9983b926ae9ef2705b33d582e8a41c91c8322a5da6eb869f8f150516b28d",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844960,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "4c4098cdf84ffba48e4275036b46b7b0110025cc27835caea3b7af29e7e08959",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4844961,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "d6777f554ae3fabf8ebfcc3e0395a6f54a7bfca340c596d258769c77c89e68b6",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842087,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "b0d23cd327963e180ff41c02a208219dec5cff985d41beb668df82f6dd60bdb2",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842088,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "fde4ed160e65d316bf1f8d973a2ff78815b983e898a67308fd17b8dc142919d2",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842089,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "26f8cea901f1939192a796d084005029c820dbc6b60515d5cd5875337c551900",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842090,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "a6e0154376f0b7fd7d79130d1a6d0ea6996403badcd00c44093a9ebf010802f9",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842091,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "ref" : "a0d817fbedcaa33a9fc14664d56f1aaaa050ec074498c9aa04f6cc5c4c3a7c25",
+        "reason" : "matching external ref already in Superfaktura",
+        "matched" : 4842092,
+        "type" : "SkipDuplicate"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/PXL_20260619_160614611.jpg",
+        "expense" : 4844961,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/VP Vargovčík 052026.pdf",
+        "expense" : 4844956,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/Invoice-474E31C1-0015.pdf",
+        "expense" : 4842089,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/PP Urobené dobre 052026.pdf",
+        "expense" : 4844957,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/SPKAL_20250116_093358_156.pdf",
+        "expense" : 4844960,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    },
+    {
+      "action" : {
+        "receipt" : "/Users/maro/Desktop/receipts/PXL_20260619_160626690.jpg",
+        "expense" : 4844959,
+        "type" : "ReceiptAlreadyUploaded"
+      },
+      "status" : "Skipped"
+    }
+  ]
+}
