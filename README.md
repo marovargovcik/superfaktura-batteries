@@ -12,7 +12,8 @@ Turn a bank statement into correctly-recorded expenses, with receipts attached â
 - **Plan first**: analyse the inputs and write a reviewable plan (what it *would* create/attach); you review and edit it;
   only then does `apply` make any changes. Re-runs are idempotent.
 
-The two capabilities compose or run independently (expenses only, or receipts-only against existing expenses).
+`--csv` is always required; `--receipts` is optional and, within a run, attaches receipts to both newly-created and
+pre-existing expenses.
 
 Optionally, a **rules file** (`--rules`) rewrites expense names and attaches fixed files automatically: each rule
 matches a transaction by exact/partial name or recipient IBAN and can rename it (with a `{date}` placeholder) and/or

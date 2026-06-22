@@ -26,8 +26,8 @@ A command-line tool that automates business bookkeeping against the
 
 The two capabilities compose. Because the Superfaktura API carries the attachment **inside** the expense-create call
 (see [Attachments](#attachments-base64-inside-the-expense-call)), "create expense and attach its receipt" is a single
-operation. They also run independently: expenses from a CSV with no receipts folder; or attaching receipts to
-pre-existing expenses with no CSV.
+operation. Expenses always come from a CSV (`--csv` is required); receipt pairing (`--receipts`) is an optional add-on,
+and within a run a receipt attaches to either a newly-created expense or one already in Superfaktura.
 
 ## Design principles (load-bearing)
 
@@ -81,11 +81,12 @@ Single user: the business owner doing their own bookkeeping.
 | A | `plan --csv statement.csv --receipts ./receipts` | Dry-run plan: expenses, receipt pairings, duplicates. |
 | B | `apply --plan plan.json` | Executes a reviewed (and possibly hand-edited) plan. |
 | C | `plan --csv statement.csv` | Expenses only, no attachment pairing. |
-| D | `plan --receipts ./receipts` | Attach receipts to **existing** Superfaktura expenses only. |
+| D | `plan --csv statement.csv --receipts ./receipts` | Within that run, receipts also pair to expenses **already in** Superfaktura, not only newly-created ones. |
 
-Input paths are always supplied explicitly as CLI flags (`--csv`, `--receipts`) — there is no env/config default for
-them. At least one of `--csv` / `--receipts` must be given. An optional `--rules <file>` modifies the `plan` step
-(see [Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules)); it is not a standalone mode.
+Input paths are always supplied explicitly as CLI flags — there is no env/config default for them. **`--csv` is always
+required**; `--receipts` (receipt pairing) and `--rules <file>` (rewrite rules, see
+[Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules)) are optional modifiers of the `plan`
+step, not standalone modes.
 
 ## The Superfaktura API (verified against the docs)
 
