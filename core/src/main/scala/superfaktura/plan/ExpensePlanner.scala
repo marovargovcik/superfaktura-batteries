@@ -39,6 +39,9 @@ object ExpensePlanner:
         matchedRule(transaction, rules).flatMap(_.attach).map(path => externalRef(transaction) -> ReceiptRef(path))
       .toMap
 
+  def flagMissingAttachments(missing: List[ReceiptRef]): List[PlanItem] =
+    missing.map(ref => PlanItem(PlanAction.FlagReceipt(ref, "rule attachment file not found"), PlanItemStatus.Skipped))
+
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
       existing.find(matchesRef(candidate, _)) match

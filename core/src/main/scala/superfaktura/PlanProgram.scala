@@ -34,11 +34,12 @@ object PlanProgram:
       rules <- ruleStore.load
       transactions <- bank.read(csv)
       candidates = ExpensePlanner.toCandidates(transactions, rules)
-      ruleAttachments = ExpensePlanner.ruleAttachments(transactions, rules)
+      (presentAttachments, missingAttachments) <-
+        resolveRuleAttachments(ExpensePlanner.ruleAttachments(transactions, rules))
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (receiptPairs, unreadable) = scanned
       existing <- listExisting(candidates, receiptPairs.map { case (_, receipt) => receipt })
-      plan = assemble(candidates, existing, receiptPairs, unreadable, ruleAttachments)
+      plan = assemble(candidates, existing, receiptPairs, unreadable, presentAttachments, missingAttachments)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
@@ -56,14 +57,27 @@ object PlanProgram:
       existing: List[Expense],
       receiptPairs: List[(ReceiptMarker, Receipt)],
       unreadable: List[ReceiptRef],
-      ruleAttachments: Map[ExternalRef, ReceiptRef]
+      ruleAttachments: Map[ExternalRef, ReceiptRef],
+      missingAttachments: List[ReceiptRef]
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
     val (alreadyUploaded, fresh) = ExpensePlanner.partitionUploaded(receiptPairs, existing)
     val matched = ReceiptMatcher.matchReceipts(fresh, targets, MatchWindow.default)
     val base = ExpensePlanner.buildPlan(triage, matched, unreadable, ruleAttachments)
-    Plan(base.items ++ alreadyUploaded)
+    Plan(base.items ++ alreadyUploaded ++ ExpensePlanner.flagMissingAttachments(missingAttachments))
+
+  // A rule names an explicit attachment path; one that no longer exists is flagged here rather than
+  // left to fail the whole `apply` run when its bytes can't be read.
+  private def resolveRuleAttachments[F[_]: MonadThrow](attachments: Map[ExternalRef, ReceiptRef])(using
+      receiptSource: ReceiptSourceAlgebra[F]
+  ): F[(Map[ExternalRef, ReceiptRef], List[ReceiptRef])] =
+    attachments.toList
+      .traverse((ref, receipt) => receiptSource.exists(receipt).map(exists => (ref, receipt, exists)))
+      .map: resolved =>
+        val present = resolved.collect { case (ref, receipt, true) => ref -> receipt }.toMap
+        val missing = resolved.collect { case (_, receipt, false) => receipt }
+        (present, missing)
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using
       receiptSource: ReceiptSourceAlgebra[F],

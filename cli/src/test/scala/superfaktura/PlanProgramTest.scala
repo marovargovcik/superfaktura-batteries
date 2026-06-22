@@ -53,6 +53,9 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
     override def list(folder: Path): IO[List[ReceiptFile]] = IO.pure(refs.map(ReceiptFile(_, 100L)))
     override def load(ref: ReceiptRef): IO[ReceiptBytes] = IO.pure(ReceiptBytes(ByteVector(1)))
 
+  private def attachmentsExist(present: Boolean): ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
+    override def exists(ref: ReceiptRef): IO[Boolean] = IO.pure(present)
+
   private def ocrReturning(amount: String, on: LocalDate): OcrAlgebra[IO] = new OcrAlgebraStub[IO]:
     override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
       IO.pure(OcrResult(Some(Money(BigDecimal(amount), "EUR")), Some(on)))
@@ -264,7 +267,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
       given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
       given SuperfakturaAlgebra[IO] = lists(Nil)
-      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
       given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
       given PlanStore[IO] = savedBy(saved)
       given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
@@ -274,6 +277,29 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
         case PlanItem(PlanAction.CreateExpense(_, candidate, attach), _) => candidate.name -> attach
       } shouldBe List("LANDLORD" -> Some(ReceiptRef("/invoices/rent.pdf")))
+    }
+
+    "flags a rule attachment whose file is missing, and creates the expense without it" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba 8180")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = false)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.CreateExpense(_, candidate, attach), _) =>
+        candidate.name -> attach
+      } shouldBe
+        List("LANDLORD" -> None)
+      items.collect { case PlanItem(PlanAction.FlagReceipt(ref, _), _) => ref } shouldBe List(
+        ReceiptRef("/invoices/gone.pdf")
+      )
     }
   }
 end PlanProgramTest
