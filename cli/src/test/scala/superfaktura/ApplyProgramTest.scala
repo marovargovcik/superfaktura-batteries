@@ -53,9 +53,6 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
 
   "ApplyProgram.run" - {
     "creates a pending expense with its prepared attachment and leaves duplicates untouched" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan = Plan(
         List(
           PlanItem(
@@ -65,24 +62,27 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("r2"), "dup", ExpenseId(9)), PlanItemStatus.Skipped)
         )
       )
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
-      given ReceiptSourceAlgebra[IO] = loadsReceipt
-      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.Fitted(prepared))
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
       val expected =
         ExpensePlanner.newExpense(candidate.externalRef, candidate).copy(comment = Some(s"sfref:r1 ${marker.value}"))
-      added.get.unsafeRunSync() shouldBe List((expected, Some(prepared)))
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
-        List(PlanItemStatus.Applied, PlanItemStatus.Skipped)
+      given ReceiptSourceAlgebra[IO] = loadsReceipt
+      given ImagePrepAlgebra[IO] = prep(PreparedAttachment.Fitted(prepared))
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedAdds <- added.get
+          finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
+        yield
+          recordedAdds shouldBe List((expected, Some(prepared)))
+          finalPlan.items.map(_.status) shouldBe List(PlanItemStatus.Applied, PlanItemStatus.Skipped)
+      test.unsafeRunSync()
     }
 
     "still books the expense without the attachment when ImagePrep flags it too large" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan = Plan(
         List(
           PlanItem(
@@ -91,22 +91,25 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = loadsReceipt
       given ImagePrepAlgebra[IO] = prep(PreparedAttachment.TooLarge("over the cap"))
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
-      added.get.unsafeRunSync() shouldBe List((ExpensePlanner.newExpense(candidate.externalRef, candidate), None))
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
-        List(PlanItemStatus.Applied)
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedAdds <- added.get
+          finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
+        yield
+          recordedAdds shouldBe List((ExpensePlanner.newExpense(candidate.externalRef, candidate), None))
+          finalPlan.items.map(_.status) shouldBe List(PlanItemStatus.Applied)
+      test.unsafeRunSync()
     }
 
     "attaches to an existing expense" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan = Plan(
         List(
           PlanItem(
@@ -115,61 +118,70 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = loadsReceipt
       given ImagePrepAlgebra[IO] = prep(PreparedAttachment.Fitted(prepared))
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
-      edited.get.unsafeRunSync() shouldBe
-        List((ExpenseId(7), ExpensePatch(None, Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
-        List(PlanItemStatus.Applied)
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedEdits <- edited.get
+          finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
+        yield
+          recordedEdits shouldBe
+            List((ExpenseId(7), ExpensePatch(None, Some(prepared), Some(s"sfref:e7 ${marker.value}"))))
+          finalPlan.items.map(_.status) shouldBe List(PlanItemStatus.Applied)
+      test.unsafeRunSync()
     }
 
     "renames an existing expense, sending only the name" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan = Plan(List(PlanItem(PlanAction.RenameExpense(ExpenseId(7), "Rent 16.06.2026"), PlanItemStatus.Pending)))
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
       given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO] {}
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
-      edited.get.unsafeRunSync() shouldBe List((ExpenseId(7), ExpensePatch(Some("Rent 16.06.2026"), None, None)))
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
-        List(PlanItemStatus.Applied)
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedEdits <- edited.get
+          finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
+        yield
+          recordedEdits shouldBe List((ExpenseId(7), ExpensePatch(Some("Rent 16.06.2026"), None, None)))
+          finalPlan.items.map(_.status) shouldBe List(PlanItemStatus.Applied)
+      test.unsafeRunSync()
     }
 
     "fails an attach-to-existing when the receipt cannot be made to fit" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan =
         Plan(List(PlanItem(
           PlanAction.AttachToExisting(ExpenseId(7), ReceiptRef("big.pdf"), None),
           PlanItemStatus.Pending
         )))
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       given ReceiptSourceAlgebra[IO] = loadsReceipt
       given ImagePrepAlgebra[IO] = prep(PreparedAttachment.TooLarge("over the cap"))
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
-      edited.get.unsafeRunSync() shouldBe empty
-      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.map(_.status) shouldBe
-        List(PlanItemStatus.Failed)
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedEdits <- edited.get
+          finalPlan <- saved.get.map(_.getOrElse(fail("plan was not saved")))
+        yield
+          recordedEdits shouldBe empty
+          finalPlan.items.map(_.status) shouldBe List(PlanItemStatus.Failed)
+      test.unsafeRunSync()
     }
 
     "is idempotent: an already-applied create is not re-created and never touches the receipt source" in {
-      val saved = Ref.unsafe[IO, Option[Plan]](None)
-      val added = Ref.unsafe[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
-      val edited = Ref.unsafe[IO, List[(ExpenseId, ExpensePatch)]](Nil)
       val plan = Plan(
         List(
           PlanItem(
@@ -178,15 +190,20 @@ class ApplyProgramTest extends AnyFreeSpec with Matchers:
           )
         )
       )
-      given PlanStore[IO] = planStore(plan, saved)
-      given SuperfakturaAlgebra[IO] = recordingSuperfaktura(added, edited)
       // load/fit left unimplemented (???): the test fails if an Applied item touches them again.
       given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
       given ImagePrepAlgebra[IO] = new ImagePrepAlgebraStub[IO] {}
-
-      ApplyProgram.run[IO].unsafeRunSync()
-
-      added.get.unsafeRunSync() shouldBe empty
+      val test =
+        for
+          saved <- Ref.of[IO, Option[Plan]](None)
+          added <- Ref.of[IO, List[(NewExpense, Option[ReceiptBytes])]](Nil)
+          edited <- Ref.of[IO, List[(ExpenseId, ExpensePatch)]](Nil)
+          given PlanStore[IO] <- IO.pure(planStore(plan, saved))
+          given SuperfakturaAlgebra[IO] <- IO.pure(recordingSuperfaktura(added, edited))
+          _ <- ApplyProgram.run[IO]
+          recordedAdds <- added.get
+        yield recordedAdds shouldBe empty
+      test.unsafeRunSync()
     }
   }
 end ApplyProgramTest

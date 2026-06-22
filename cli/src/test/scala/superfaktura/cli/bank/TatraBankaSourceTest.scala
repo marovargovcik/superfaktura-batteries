@@ -21,17 +21,20 @@ class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
 
   "read" - {
     "decodes the Windows-1250 export and parses every row" in {
-      val transactions = TatraBankaSource.live[IO].read(sample).unsafeRunSync()
-
-      transactions.map(_.direction) shouldBe List(
-        TransactionType.Debit,
-        TransactionType.Debit,
-        TransactionType.Credit
-      )
-      transactions.head.variableSymbol shouldBe Some("5646196800")
-      transactions.head.counterpartyIban shouldBe Some("SK5281800000007000747747")
-      transactions(1).recipientInfo.exists(_.contains("VARGOVČÍK")) shouldBe true
-      transactions(1).amount shouldBe Money(BigDecimal("73.71"), "EUR")
+      TatraBankaSource.live[IO]
+        .read(sample)
+        .map { transactions =>
+          transactions.map(_.direction) shouldBe List(
+            TransactionType.Debit,
+            TransactionType.Debit,
+            TransactionType.Credit
+          )
+          transactions.head.variableSymbol shouldBe Some("5646196800")
+          transactions.head.counterpartyIban shouldBe Some("SK5281800000007000747747")
+          transactions(1).recipientInfo.exists(_.contains("VARGOVČÍK")) shouldBe true
+          transactions(1).amount shouldBe Money(BigDecimal("73.71"), "EUR")
+        }
+        .unsafeRunSync()
     }
 
     "fails with CsvInvalid on a malformed row" in {
@@ -39,9 +42,14 @@ class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
       val content = "Dátum spracovania,Suma,Mena,Typ\n19.06.2026,n/a,EUR,Debet\n"
       Files.write(bad, content.getBytes(windows1250))
 
-      TatraBankaSource.live[IO].read(bad).attempt.unsafeRunSync() match
-        case Left(_: CliError.CsvInvalid) => succeed
-        case other => fail(s"expected CsvInvalid, got: $other")
+      TatraBankaSource.live[IO]
+        .read(bad)
+        .attempt
+        .map {
+          case Left(_: CliError.CsvInvalid) => succeed
+          case other => fail(s"expected CsvInvalid, got: $other")
+        }
+        .unsafeRunSync()
     }
   }
 end TatraBankaSourceTest
