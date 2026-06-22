@@ -112,12 +112,12 @@ class IdempotencyRoundTripTest extends AnyFreeSpec with Matchers:
         // Stage 1 — csv only: one expense is created, keeping its derived name.
         _ <- cycle(false)
         afterCreate <- store.get
-        _ = afterCreate.map(_.name) shouldBe List("LANDLORD")
+        _ <- IO(afterCreate.map(_.name) shouldBe List("LANDLORD"))
 
         // Stage 2 — csv + receipts: the transaction dedupes and its receipt attaches to the now-existing expense.
         _ <- cycle(true)
         afterReceipt <- store.get
-        _ = afterReceipt.head.comment.exists(_.contains(receiptMarker.value)) shouldBe true
+        _ <- IO(afterReceipt.head.comment.exists(_.contains(receiptMarker.value)) shouldBe true)
 
         // Stage 3 — csv + receipts + rules: rename the existing expense and attach the rule's fixed file.
         _ <- activeRules.set(RuleSet(List(Rule(
@@ -127,24 +127,24 @@ class IdempotencyRoundTripTest extends AnyFreeSpec with Matchers:
         ))))
         _ <- cycle(true)
         afterRules <- store.get
-        _ = afterRules.map(_.name) shouldBe List("Rent 16.06.2026")
+        _ <- IO(afterRules.map(_.name) shouldBe List("Rent 16.06.2026"))
         comment = afterRules.head.comment.getOrElse("")
-        _ = comment should include(receiptMarker.value)
-        _ = comment should include(ruleFileMarker.value)
+        _ <- IO(comment should include(receiptMarker.value))
+        _ <- IO(comment should include(ruleFileMarker.value))
 
         // Stage 4 — identical re-run: pure no-op. Every item is a skip, and apply writes nothing.
         _ <- PlanProgram.run[IO](csvPath, receipts)
         stage4 <- savedPlan.get
-        _ = stage4.items.map(_.action).foreach {
+        _ <- IO(stage4.items.map(_.action).foreach {
           case PlanAction.SkipDuplicate(_, _, _) | PlanAction.ReceiptAlreadyUploaded(_, _) => ()
           case other => fail(s"unexpected non-skip action in a converged re-run: $other")
-        }
+        })
         createsBefore <- creates.get
         editsBefore <- edits.get
         _ <- ApplyProgram.run[IO]
         createsAfter <- creates.get
         editsAfter <- edits.get
-        _ = (createsAfter, editsAfter) shouldBe (createsBefore, editsBefore)
+        _ <- IO((createsAfter, editsAfter) shouldBe (createsBefore, editsBefore))
 
         // Over the whole sequence: exactly one create and never a duplicate.
         totalCreates <- creates.get

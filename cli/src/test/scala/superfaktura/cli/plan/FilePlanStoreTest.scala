@@ -53,13 +53,15 @@ class FilePlanStoreTest extends AnyFreeSpec with Matchers:
       val tmp = Files.createTempFile("plan-bad", ".json")
       Files.write(tmp, "{ not valid json".getBytes)
 
-      val test =
-        for
-          result <- FilePlanStore.at[IO](tmp).load.attempt
-        yield result match
+      FilePlanStore
+        .at[IO](tmp)
+        .load
+        .attempt
+        .map {
           case Left(_: CliError.PlanInvalid) => succeed
           case other => fail(s"expected PlanInvalid, got: $other")
-      test.unsafeRunSync()
+        }
+        .unsafeRunSync()
     }
   }
 end FilePlanStoreTest

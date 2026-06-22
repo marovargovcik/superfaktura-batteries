@@ -21,10 +21,9 @@ class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
 
   "read" - {
     "decodes the Windows-1250 export and parses every row" in {
-      val test =
-        for
-          transactions <- TatraBankaSource.live[IO].read(sample)
-        yield
+      TatraBankaSource.live[IO]
+        .read(sample)
+        .map { transactions =>
           transactions.map(_.direction) shouldBe List(
             TransactionType.Debit,
             TransactionType.Debit,
@@ -34,7 +33,8 @@ class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
           transactions.head.counterpartyIban shouldBe Some("SK5281800000007000747747")
           transactions(1).recipientInfo.exists(_.contains("VARGOVČÍK")) shouldBe true
           transactions(1).amount shouldBe Money(BigDecimal("73.71"), "EUR")
-      test.unsafeRunSync()
+        }
+        .unsafeRunSync()
     }
 
     "fails with CsvInvalid on a malformed row" in {
@@ -42,13 +42,14 @@ class TatraBankaSourceTest extends AnyFreeSpec with Matchers:
       val content = "Dátum spracovania,Suma,Mena,Typ\n19.06.2026,n/a,EUR,Debet\n"
       Files.write(bad, content.getBytes(windows1250))
 
-      val test =
-        for
-          result <- TatraBankaSource.live[IO].read(bad).attempt
-        yield result match
+      TatraBankaSource.live[IO]
+        .read(bad)
+        .attempt
+        .map {
           case Left(_: CliError.CsvInvalid) => succeed
           case other => fail(s"expected CsvInvalid, got: $other")
-      test.unsafeRunSync()
+        }
+        .unsafeRunSync()
     }
   }
 end TatraBankaSourceTest
