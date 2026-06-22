@@ -55,6 +55,7 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
 
   private def attachmentsExist(present: Boolean): ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO]:
     override def exists(ref: ReceiptRef): IO[Boolean] = IO.pure(present)
+    override def load(ref: ReceiptRef): IO[ReceiptBytes] = IO.pure(ReceiptBytes(ByteVector(1)))
 
   private def ocrReturning(amount: String, on: LocalDate): OcrAlgebra[IO] = new OcrAlgebraStub[IO]:
     override def read(receipt: ReceiptBytes, media: ReceiptMedia): IO[OcrResult] =
@@ -347,6 +348,72 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
       val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
       items.collect { case PlanItem(PlanAction.RenameExpense(_, _), _) => () } shouldBe empty
       items.collect { case PlanItem(PlanAction.SkipDuplicate(_, _, id), _) => id } shouldBe List(ExpenseId(5))
+    }
+
+    "attaches a rule's fixed file to an already-booked expense when it isn't attached yet" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba")
+      val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
+      val existing =
+        Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.AttachToExisting(id, attachment, _), _) => id -> attachment
+      } shouldBe List(ExpenseId(5) -> ReceiptRef("/invoices/rent.pdf"))
+    }
+
+    "does not re-attach a rule file already recorded on the existing expense" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba")
+      val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
+      val marker = ExpensePlanner.receiptMarker(ReceiptBytes(ByteVector(1)))
+      val comment = ExpensePlanner.appendMarker(Some(ExpensePlanner.refMarker(ref)), marker)
+      val existing = Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, comment)
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = true)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => ()
+      } shouldBe empty
+    }
+
+    "flags a rule attachment for an already-booked expense when the file is missing" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba")
+      val ref = ExpensePlanner.toCandidates(List(rent)).head.externalRef
+      val existing =
+        Expense(ExpenseId(5), "LANDLORD", Money(BigDecimal("450.00"), "EUR"), date, Some(ExpensePlanner.refMarker(ref)))
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(List(existing))
+      given ReceiptSourceAlgebra[IO] = attachmentsExist(present = false)
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/gone.pdf")))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      val items = saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items
+      items.collect { case PlanItem(PlanAction.AttachToExisting(_, _, _), _) => () } shouldBe empty
+      items.collect { case PlanItem(PlanAction.FlagReceipt(r, _), _) => r } shouldBe List(
+        ReceiptRef("/invoices/gone.pdf")
+      )
     }
   }
 end PlanProgramTest
