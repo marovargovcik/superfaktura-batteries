@@ -10,6 +10,7 @@ import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, Transactio
 import superfaktura.expense.{Expense, ExpenseId}
 import superfaktura.matching.{AmbiguousReceipt, ContestedTarget, MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
+import superfaktura.rule.{Rule, RuleMatch, RuleSet}
 
 class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 
@@ -105,6 +106,28 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       )
 
       refOf(a) should not be refOf(b)
+    }
+
+    "applies a matching rename rule (with {date}), and leaves the external ref untouched" in {
+      val rent = tx(
+        direction = TransactionType.Debit,
+        amount = "450.00",
+        recipientInfo = Some("LANDLORD"),
+        description = "Platba"
+      )
+      val rules = RuleSet(List(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), None)))
+
+      val renamed = ExpensePlanner.toCandidates(List(rent), rules).head
+      renamed.name shouldBe "Rent 19.06.2026"
+      renamed.externalRef shouldBe refOf(rent)
+    }
+
+    "falls back to the derived name when no rule matches" in {
+      val tesco =
+        tx(direction = TransactionType.Debit, amount = "12.00", recipientInfo = Some("TESCO"), description = "Platba")
+      val rules = RuleSet(List(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent"), None)))
+
+      ExpensePlanner.toCandidates(List(tesco), rules).head.name shouldBe "TESCO"
     }
   }
 

@@ -17,6 +17,7 @@ import superfaktura.receipt.{
   ReceiptRef,
   ReceiptSourceAlgebra
 }
+import superfaktura.rule.RuleStore
 
 object PlanProgram:
 
@@ -26,11 +27,13 @@ object PlanProgram:
       receiptSource: ReceiptSourceAlgebra[F],
       ocr: OcrAlgebra[F],
       store: PlanStore[F],
-      reporter: ReporterAlgebra[F]
+      reporter: ReporterAlgebra[F],
+      ruleStore: RuleStore[F]
   ): F[Unit] =
     for
+      rules <- ruleStore.load
       transactions <- bank.read(csv)
-      candidates = ExpensePlanner.toCandidates(transactions)
+      candidates = ExpensePlanner.toCandidates(transactions, rules)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (receiptPairs, unreadable) = scanned
       existing <- listExisting(candidates, receiptPairs.map { case (_, receipt) => receipt })

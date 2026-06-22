@@ -18,9 +18,11 @@ import superfaktura.cli.bank.TatraBankaSource
 import superfaktura.cli.expense.SuperfakturaClient
 import superfaktura.cli.plan.FilePlanStore
 import superfaktura.cli.receipt.{ClaudeOcr, FileReceiptSource, ScrimageImagePrep}
+import superfaktura.cli.rule.FileRuleStore
 import superfaktura.expense.SuperfakturaAlgebra
 import superfaktura.plan.PlanStore
 import superfaktura.receipt.{Attachment, ImagePrepAlgebra, OcrAlgebra, ReceiptSourceAlgebra}
+import superfaktura.rule.RuleStore
 
 object Main
     extends CommandIOApp(
@@ -37,7 +39,8 @@ object Main
     Opts.subcommand("plan", "Analyse the CSV (and any receipts) and write a reviewable plan (no changes are made).") {
       val csv = Opts.option[Path]("csv", "Bank statement CSV (Tatra banka export).")
       val receipts = Opts.option[Path]("receipts", "Folder of receipt/invoice files to pair and attach.").orNone
-      (csv, receipts, planPath).mapN(runPlan)
+      val rules = Opts.option[Path]("rules", "Rules JSON for renaming/attaching by transaction name or IBAN.").orNone
+      (csv, receipts, planPath, rules).mapN(runPlan)
     }
 
   private val applyCommand: Opts[IO[ExitCode]] =
@@ -45,13 +48,13 @@ object Main
 
   override def main: Opts[IO[ExitCode]] = planCommand orElse applyCommand
 
-  private def runPlan(csv: Path, receipts: Option[Path], plan: Path): IO[ExitCode] =
-    environment(plan)(PlanProgram.run[IO](csv, receipts)).as(ExitCode.Success)
+  private def runPlan(csv: Path, receipts: Option[Path], plan: Path, rules: Option[Path]): IO[ExitCode] =
+    environment(plan, rules)(PlanProgram.run[IO](csv, receipts)).as(ExitCode.Success)
 
   private def runApply(plan: Path): IO[ExitCode] =
     environment(plan)(ApplyProgram.run[IO]).as(ExitCode.Success)
 
-  private def environment[A](plan: Path)(
+  private def environment[A](plan: Path, rules: Option[Path] = None)(
       program: (
           BankStatementSourceAlgebra[IO],
           SuperfakturaAlgebra[IO],
@@ -59,7 +62,8 @@ object Main
           OcrAlgebra[IO],
           ImagePrepAlgebra[IO],
           PlanStore[IO],
-          ReporterAlgebra[IO]
+          ReporterAlgebra[IO],
+          RuleStore[IO]
       ) ?=> IO[A]
   ): IO[A] =
     loadConfig.flatMap: config =>
@@ -68,6 +72,7 @@ object Main
         given SuperfakturaConfig = config.superfaktura
         given ClaudeConfig = config.claude
         given PlanStore[IO] = FilePlanStore.at[IO](plan)
+        given RuleStore[IO] = rules.fold(RuleStore.empty[IO])(FileRuleStore.at[IO])
         given ImagePrepAlgebra[IO] = ScrimageImagePrep.fitting[IO](Attachment.maxBytes)
         import SuperfakturaClient.given
         import TatraBankaSource.given

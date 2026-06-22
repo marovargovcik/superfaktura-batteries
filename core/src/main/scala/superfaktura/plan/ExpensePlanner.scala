@@ -8,18 +8,27 @@ import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, Transactio
 import superfaktura.expense.{Expense, NewExpense}
 import superfaktura.matching.{MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
+import superfaktura.rule.{Rules, RuleSet}
 
 object ExpensePlanner:
 
-  def toCandidates(transactions: List[Transaction]): List[CandidateExpense] =
+  def toCandidates(transactions: List[Transaction], rules: RuleSet = RuleSet.empty): List[CandidateExpense] =
     transactions.collect:
       case transaction if transaction.direction == TransactionType.Debit =>
         CandidateExpense(
           externalRef = externalRef(transaction),
-          name = expenseName(transaction),
+          name = candidateName(transaction, rules),
           amount = transaction.amount,
           occurredOn = transaction.date
         )
+
+  // A rename rule replaces only the human-visible name; the external ref still hashes the raw CSV
+  // fields, so renaming never affects de-duplication on re-runs.
+  private def candidateName(transaction: Transaction, rules: RuleSet): String =
+    val default = expenseName(transaction)
+    Rules.firstMatch(rules, default, transaction.counterpartyIban).flatMap(_.rename) match
+      case Some(template) => Rules.renderName(template, transaction.date)
+      case None => default
 
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
