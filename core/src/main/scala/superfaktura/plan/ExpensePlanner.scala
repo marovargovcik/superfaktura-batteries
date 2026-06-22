@@ -8,7 +8,7 @@ import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, Transactio
 import superfaktura.expense.{Expense, NewExpense}
 import superfaktura.matching.{MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
-import superfaktura.rule.{Rules, RuleSet}
+import superfaktura.rule.{Rule, Rules, RuleSet}
 
 object ExpensePlanner:
 
@@ -22,22 +22,21 @@ object ExpensePlanner:
           occurredOn = transaction.date
         )
 
+  private def matchedRule(transaction: Transaction, rules: RuleSet): Option[Rule] =
+    Rules.firstMatch(rules, expenseName(transaction), transaction.counterpartyIban)
+
   // A rename rule replaces only the human-visible name; the external ref still hashes the raw CSV
   // fields, so renaming never affects de-duplication on re-runs.
   private def candidateName(transaction: Transaction, rules: RuleSet): String =
-    val default = expenseName(transaction)
-    Rules.firstMatch(rules, default, transaction.counterpartyIban).flatMap(_.rename) match
+    matchedRule(transaction, rules).flatMap(_.rename) match
       case Some(template) => Rules.renderName(template, transaction.date)
-      case None => default
+      case None => expenseName(transaction)
 
   def ruleAttachments(transactions: List[Transaction], rules: RuleSet): Map[ExternalRef, ReceiptRef] =
     transactions
       .filter(_.direction == TransactionType.Debit)
       .flatMap: transaction =>
-        Rules
-          .firstMatch(rules, expenseName(transaction), transaction.counterpartyIban)
-          .flatMap(_.attach)
-          .map(path => externalRef(transaction) -> ReceiptRef(path))
+        matchedRule(transaction, rules).flatMap(_.attach).map(path => externalRef(transaction) -> ReceiptRef(path))
       .toMap
 
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
