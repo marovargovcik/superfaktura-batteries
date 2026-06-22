@@ -24,20 +24,33 @@ class FileRuleStoreTest extends AnyFreeSpec with Matchers:
       val content =
         """{ "rules": [ { "when": { "type": "ExactName", "name": "SHELL 8203" }, "rename": "Fuel" } ] }"""
       withFile(content): path =>
-        FileRuleStore.at[IO](path).load.unsafeRunSync().rules shouldBe
-          List(Rule(RuleMatch.ExactName("SHELL 8203"), Some("Fuel"), None))
+        val test =
+          for
+            ruleSet <- FileRuleStore.at[IO](path).load
+          yield ruleSet.rules shouldBe List(Rule(RuleMatch.ExactName("SHELL 8203"), Some("Fuel"), None))
+        test.unsafeRunSync()
     }
 
     "rejects a rule that neither renames nor attaches" in {
       val content = """{ "rules": [ { "when": { "type": "PartialName", "fragment": "AWS" } } ] }"""
       withFile(content): path =>
-        intercept[CliError.RulesInvalid](FileRuleStore.at[IO](path).load.unsafeRunSync())
-        ()
+        val test =
+          for
+            result <- FileRuleStore.at[IO](path).load.attempt
+          yield result match
+            case Left(_: CliError.RulesInvalid) => succeed
+            case other => fail(s"expected RulesInvalid, got: $other")
+        test.unsafeRunSync()
     }
 
     "fails with FileAccess when the file is missing" in {
-      intercept[CliError.FileAccess](FileRuleStore.at[IO](Paths.get("does-not-exist.json")).load.unsafeRunSync())
-      ()
+      val test =
+        for
+          result <- FileRuleStore.at[IO](Paths.get("does-not-exist.json")).load.attempt
+        yield result match
+          case Left(_: CliError.FileAccess) => succeed
+          case other => fail(s"expected FileAccess, got: $other")
+      test.unsafeRunSync()
     }
   }
 end FileRuleStoreTest
