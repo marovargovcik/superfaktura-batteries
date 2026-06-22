@@ -18,13 +18,16 @@ A command-line tool that automates business bookkeeping against the
 - **Creates expenses** in Superfaktura from a Tatra banka transaction-export CSV.
 - **Attaches receipts/invoices** (PDF / JPG / PNG / HEIC) from a local folder to the correct expenses — newly created
   ones or ones that already exist in Superfaktura.
+- **Rewrites expense names and attaches fixed files via optional rules** (`--rules`): a small JSON rule database keyed
+  on transaction name or recipient IBAN renames expenses (with a `{date}` placeholder) and/or attaches a specific file
+  (see [Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules)).
 - Operates **plan-first**: it analyses inputs and emits exactly what it will do (how many expenses, names/amounts,
   which files attach where, which look like duplicates); the user reviews/edits; only then does it mutate anything.
 
 The two capabilities compose. Because the Superfaktura API carries the attachment **inside** the expense-create call
 (see [Attachments](#attachments-base64-inside-the-expense-call)), "create expense and attach its receipt" is a single
-operation. They also run independently: expenses from a CSV with no receipts folder; or attaching receipts to
-pre-existing expenses with no CSV.
+operation. Expenses always come from a CSV (`--csv` is required); receipt pairing (`--receipts`) is an optional add-on,
+and within a run a receipt attaches to either a newly-created expense or one already in Superfaktura.
 
 ## Design principles (load-bearing)
 
@@ -78,10 +81,12 @@ Single user: the business owner doing their own bookkeeping.
 | A | `plan --csv statement.csv --receipts ./receipts` | Dry-run plan: expenses, receipt pairings, duplicates. |
 | B | `apply --plan plan.json` | Executes a reviewed (and possibly hand-edited) plan. |
 | C | `plan --csv statement.csv` | Expenses only, no attachment pairing. |
-| D | `plan --receipts ./receipts` | Attach receipts to **existing** Superfaktura expenses only. |
+| D | `plan --csv statement.csv --receipts ./receipts` | Within that run, receipts also pair to expenses **already in** Superfaktura, not only newly-created ones. |
 
-Input paths are always supplied explicitly as CLI flags (`--csv`, `--receipts`) — there is no env/config default for
-them. At least one of `--csv` / `--receipts` must be given.
+Input paths are always supplied explicitly as CLI flags — there is no env/config default for them. **`--csv` is always
+required**; `--receipts` (receipt pairing) and `--rules <file>` (rewrite rules, see
+[Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules)) are optional modifiers of the `plan`
+step, not standalone modes.
 
 ## The Superfaktura API (verified against the docs)
 
@@ -264,6 +269,55 @@ Rules:
 - `NoReceiptExpected` (bank fees never have a receipt) — *planned*, not yet implemented; today such expenses simply
   appear as ordinary `CreateExpense` items without an attachment.
 
+### Name-rewrite & fixed-attachment rules
+
+An optional `--rules <file>` supplies a JSON `RuleSet` that customises the `plan` step. It exists because some
+transactions recur every month and always want the same human-readable name (and sometimes the same attachment),
+which would otherwise be a manual edit of `plan.json` each run. The rules are loaded via `RuleStore[F]`
+(`FileRuleStore`) and validated at the boundary; a rule that neither renames nor attaches is rejected.
+
+A `Rule` is a matching condition plus up to two effects:
+
+```scala
+enum RuleMatch:
+  case ExactName(name: String)        // equals the derived expense name
+  case PartialName(fragment: String)  // derived expense name contains the fragment (case-sensitive)
+  case ExactRecipient(iban: String)   // equals the transaction's counterparty IBAN
+
+case class Rule(when: RuleMatch, rename: Option[String], attach: Option[String])
+case class RuleSet(rules: List[Rule])
+```
+
+Semantics:
+
+- **Match target.** Name conditions match against the *derived* expense name (the same string shown in the plan, after
+  the card-merchant/recipient/description derivation), so rules are written against what the user reviews.
+- **First match wins.** Rules are tried in file order; the first matching rule applies, the rest are ignored.
+- **Rename.** `rename` is a template; `{date}` is replaced with the transaction date as `dd.MM.yyyy`. The rewrite
+  affects only the human-visible name — the external ref still hashes the raw CSV fields, so **renaming never changes
+  de-duplication** on re-runs.
+- **Attach.** `attach` is an explicit filesystem path (not relative to `--receipts`); the file is uploaded by `apply`
+  through the normal create-attachment path. A rule attachment **wins over an OCR-paired receipt** for the same
+  expense. Because the path is arbitrary (unlike OCR receipts, which are always real files in the scanned folder), its
+  existence is checked at plan time: a missing file becomes a `FlagReceipt` item rather than failing the later `apply`.
+
+Rules reuse the existing `PlanAction` shapes — a renamed/attached expense is still a `CreateExpense`, a missing
+attachment is a `FlagReceipt` — so the plan model and `apply` are unchanged.
+
+```json
+{
+  "rules": [
+    { "when": { "type": "PartialName", "fragment": "SHELL" }, "rename": "PHM Shell {date}" },
+    { "when": { "type": "ExactRecipient", "iban": "SK3575000080100202331203" },
+      "rename": "Kia leasing {date}", "attach": "/Users/me/receipts/leasing.pdf" }
+  ]
+}
+```
+
+> [!NOTE]
+> The `attach` path is read from the local filesystem at `apply` time, so a rules file is assumed to be
+> author-controlled (this is a local single-user CLI).
+
 ### Plan-first / dry-run (core UX)
 
 - `plan` runs the entire pure pipeline (parse → dedup → pairing) and emits a human-readable summary plus an editable
@@ -302,7 +356,8 @@ Rules:
 ### Stack
 
 - **Language/runtime:** Scala 3 on the JVM. **Effect system:** cats-effect (`IO` at the edge, `F[_]` everywhere else).
-- **Build:** sbt 2.0. **Testing:** ScalaTest `AnyFreeSpec`, with `*Stub` algebras (no mocking library — see
+- **Build:** sbt 1.x (`project/build.properties` pins 1.12.x; sbt 2.0 was tried and reverted due to ecosystem
+  issues). **Testing:** ScalaTest `AnyFreeSpec`, with `*Stub` algebras (no mocking library — see
   [Testing](#testing-strategy)).
 - **Config:** HOCON `*.conf` + pureconfig; secrets injected via env interpolation (`${?ENV_VAR}`).
 - **Formatting/linting:** scalafmt (Scala 3 dialect) + compiler `-Werror -Wunused`; both enforced (see
@@ -352,9 +407,10 @@ tests (see [Testing](#testing-strategy)).
 | Algebra / Store (`trait …[F[_]]`) | Responsibility (edge) | Live interpreter (`cli` object) |
 |-----------------------------------|-----------------------|---------------------------------|
 | `BankStatementSourceAlgebra[F]` | decode CSV → `List[Transaction]` | `TatraBankaSource.live` (CP1250) |
-| `ReceiptSourceAlgebra[F]` | enumerate + read receipt files | `FileReceiptSource.live` (fs2) |
+| `ReceiptSourceAlgebra[F]` | enumerate + read + existence-check receipt files | `FileReceiptSource.live` (fs2) |
 | `SuperfakturaAlgebra[F]` | list / create+attach / edit expenses (HTTP) | `SuperfakturaClient.live` (http4s, prod/sandbox by URL) |
 | `PlanStore[F]` | persist/load plan (JSON, status incl.) | `FilePlanStore.at(path)` (factory, not a `given`) |
+| `RuleStore[F]` | load the name-rewrite/attachment rules (JSON) | `FileRuleStore.at(path)` (factory); `RuleStore.empty` when no `--rules`) |
 | `ImagePrepAlgebra[F]` | downscale oversized jpg/png to ≤4 MB | `ScrimageImagePrep.fitting(maxBytes)` (factory) |
 | `ReporterAlgebra[F]` | render human summary | `ConsoleReporter.live` |
 | `OcrAlgebra[F]` | read amount/date from receipt | `ClaudeOcr.live` (Anthropic vision, http4s) |
@@ -635,6 +691,12 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
 - **Boundary validation** — plain parsers returning `Either[String, …]` lifted to a single `CliError` `enum` at the
   edges, plus smart constructors. **Iron was considered but not adopted** — the boundaries are few and the plain
   approach kept the code simpler; revisit only if field-level invariants multiply.
+- **Name-rewrite & fixed-attachment rules** — an optional `--rules` JSON file (`RuleSet`) where each `Rule` matches a
+  transaction by `ExactName`/`PartialName` (against the derived expense name) or `ExactRecipient` (counterparty IBAN)
+  and may rename it (`{date}` template) and/or attach an explicit file path. **First match wins.** Renames leave the
+  external ref untouched (dedup unaffected); a rule attachment beats an OCR-paired receipt; a missing attachment path
+  is flagged at plan time. Modelled as a small ADT loaded via `RuleStore`/`FileRuleStore`, mirroring `PlanStore`
+  (chosen over passing a plain `RuleSet` value for consistency with the existing file-backed store pattern).
 
 ## Still open
 
@@ -652,7 +714,7 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
 
 ## Milestones
 
-- **M0 — Scaffold (done):** sbt 2.0 build (Scala 3, cats-effect, http4s, circe, fs2-data-csv, decline, pureconfig),
+- **M0 — Scaffold (done):** sbt 1.x build (Scala 3, cats-effect, http4s, circe, fs2-data-csv, decline, pureconfig),
   `core`/`cli` subprojects, `.scalafmt.conf` + `-Werror`, `AppConfig` loaded via pureconfig in `Main`, committed
   `application.conf` (defaults + `${?ENV}`), algebra traits + `*Stub`s, pure-core signatures + first tests.
 - **M1 — Expenses from CSV (done):** `TatraBankaSource` interpreter, pure `toCandidates`, `SuperfakturaClient.live`,
@@ -662,6 +724,10 @@ Per [`CLAUDE.md`](../CLAUDE.md) — as few tests as possible covering the import
   `ReceiptMatcher` (exact amount + `[receipt−1, receipt+3]` window, mutual-unique 1:1, ambiguity → `FlagReceipt`,
   against new *or* existing expenses), `ScrimageImagePrep` downscaling, create+attach in one POST. Delivers full A
   and D. *(Built; not yet smoke-tested against a live/sandbox API.)*
+- **M2.5 — Name-rewrite & fixed-attachment rules (done):** optional `--rules` JSON loaded via
+  `RuleStore`/`FileRuleStore`; `RuleMatch` ADT (exact/partial name, exact recipient IBAN); first-match rename with a
+  `{date}` template (external ref unchanged) and explicit fixed attachments that beat OCR pairings, with missing paths
+  flagged at plan time. See [Name-rewrite & fixed-attachment rules](#name-rewrite--fixed-attachment-rules).
 - **M3 — Interactive TUI (future):** introduces `CorrectionStrategyAlgebra[F]` + a TUI interpreter over the existing
   plan model.
 

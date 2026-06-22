@@ -50,8 +50,8 @@
 ## Building & Testing
 
 - Scope commands to specific subprojects using slash-syntax: `sbt <subproject>/<command>` (e.g. `sbt core/test`).
-- sbt 2.0 runs in client mode (the `sbtn` thin client) by default once `project/build.properties` pins `sbt.version`
-  to 2.x — no `--client` flag needed (that was an sbt 1.x opt-in).
+- The build runs on **sbt 1.x** (`project/build.properties` pins `sbt.version` to 1.12.x). sbt 2.0 was tried but
+  reverted due to plugin/ecosystem issues; the `sbtn` thin client is therefore opt-in (`--client`), not the default.
 
 ## Git Hooks
 
@@ -97,7 +97,7 @@
 
 ## Scala — Code Structure
 
-**Tech stack**: Scala 3 with cats-effect for functional programming, sbt 2.0 for build management, ScalaTest for testing.
+**Tech stack**: Scala 3 with cats-effect for functional programming, sbt 1.x for build management, ScalaTest for testing.
 
 - **Pure functions first**: Put as much logic as possible in pure, easily testable methods. Write in functional style avoiding side effects.
 - **All side-effecting code must be properly handled with cats-effect** — never perform side effects outside of `F[_]`.
