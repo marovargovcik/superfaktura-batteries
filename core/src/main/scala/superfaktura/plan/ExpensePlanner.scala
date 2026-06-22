@@ -45,7 +45,7 @@ object ExpensePlanner:
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
       existing.find(matchesRef(candidate, _)) match
-        case Some(expense) => Left(Duplicate(candidate, expense.id, "matching external ref already in Superfaktura"))
+        case Some(expense) => Left(Duplicate(candidate, expense, "matching external ref already in Superfaktura"))
         case None => Right(candidate)
     Triage(toCreate, duplicates)
 
@@ -73,7 +73,7 @@ object ExpensePlanner:
         PlanItem(PlanAction.AttachToExisting(expense.id, receipt.ref, expense.comment), PlanItemStatus.Pending)
     val skips = triage.duplicates.map: duplicate =>
       PlanItem(
-        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existingId),
+        PlanAction.SkipDuplicate(duplicate.candidate.externalRef, duplicate.reason, duplicate.existing.id),
         PlanItemStatus.Skipped
       )
     Plan(creates ++ attaches ++ skips ++ receiptFlags(matched, unreadableReceipts))

@@ -190,7 +190,7 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
 
       val result = ExpensePlanner.triage(candidates, existing)
       result.toCreate.map(_.name) shouldBe List("UHRADA POISTNEHO")
-      result.duplicates.map(_.existingId) shouldBe List(ExpenseId(9))
+      result.duplicates.map(_.existing.id) shouldBe List(ExpenseId(9))
       result.duplicates.map(_.candidate.name) shouldBe List("SHELL 8203")
     }
 
@@ -275,8 +275,9 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     "emits Pending creates and Skipped duplicates" in {
       val fresh = CandidateExpense(ExternalRef("r1"), "ORANGE", Money(BigDecimal("45.45"), "EUR"), date)
       val dup = CandidateExpense(ExternalRef("r2"), "SHELL", Money(BigDecimal("73.71"), "EUR"), date)
+      val existing = Expense(ExpenseId(9), "SHELL", Money(BigDecimal("73.71"), "EUR"), date, None)
 
-      ExpensePlanner.buildPlan(Triage(List(fresh), List(Duplicate(dup, ExpenseId(9), "dup")))) shouldBe Plan(
+      ExpensePlanner.buildPlan(Triage(List(fresh), List(Duplicate(dup, existing, "dup")))) shouldBe Plan(
         List(
           PlanItem(PlanAction.CreateExpense(ExternalRef("r1"), fresh, None), PlanItemStatus.Pending),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("r2"), "dup", ExpenseId(9)), PlanItemStatus.Skipped)
