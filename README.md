@@ -17,7 +17,8 @@ pre-existing expenses.
 
 Optionally, a **rules file** (`--rules`) rewrites expense names and attaches fixed files automatically: each rule
 matches a transaction by exact/partial name or recipient IBAN and can rename it (with a `{date}` placeholder) and/or
-attach a specific file. See [`docs/pdr.md`](docs/pdr.md#name-rewrite--fixed-attachment-rules).
+attach a specific file. Rules apply on every run — to new expenses and ones already in SuperFaktura — and are
+idempotent. See [`docs/pdr.md`](docs/pdr.md#name-rewrite--fixed-attachment-rules).
 
 ## Architecture
 
