@@ -8,18 +8,39 @@ import superfaktura.bank.{CandidateExpense, ExternalRef, Transaction, Transactio
 import superfaktura.expense.{Expense, NewExpense}
 import superfaktura.matching.{MatchResult, MatchTarget, MatchWindow, Pairing}
 import superfaktura.receipt.{Receipt, ReceiptBytes, ReceiptMarker, ReceiptRef}
+import superfaktura.rule.{Rule, Rules, RuleSet}
 
 object ExpensePlanner:
 
-  def toCandidates(transactions: List[Transaction]): List[CandidateExpense] =
+  def toCandidates(transactions: List[Transaction], rules: RuleSet = RuleSet.empty): List[CandidateExpense] =
     transactions.collect:
       case transaction if transaction.direction == TransactionType.Debit =>
         CandidateExpense(
           externalRef = externalRef(transaction),
-          name = expenseName(transaction),
+          name = candidateName(transaction, rules),
           amount = transaction.amount,
           occurredOn = transaction.date
         )
+
+  private def matchedRule(transaction: Transaction, rules: RuleSet): Option[Rule] =
+    Rules.firstMatch(rules, expenseName(transaction), transaction.counterpartyIban)
+
+  // A rename rule replaces only the human-visible name; the external ref still hashes the raw CSV
+  // fields, so renaming never affects de-duplication on re-runs.
+  private def candidateName(transaction: Transaction, rules: RuleSet): String =
+    matchedRule(transaction, rules).flatMap(_.rename) match
+      case Some(template) => Rules.renderName(template, transaction.date)
+      case None => expenseName(transaction)
+
+  def ruleAttachments(transactions: List[Transaction], rules: RuleSet): Map[ExternalRef, ReceiptRef] =
+    transactions
+      .filter(_.direction == TransactionType.Debit)
+      .flatMap: transaction =>
+        matchedRule(transaction, rules).flatMap(_.attach).map(path => externalRef(transaction) -> ReceiptRef(path))
+      .toMap
+
+  def flagMissingAttachments(missing: List[ReceiptRef]): List[PlanItem] =
+    missing.map(ref => PlanItem(PlanAction.FlagReceipt(ref, "rule attachment file not found"), PlanItemStatus.Skipped))
 
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
@@ -30,10 +51,16 @@ object ExpensePlanner:
 
   def buildPlan(triage: Triage): Plan = buildPlan(triage, MatchResult.empty, Nil)
 
-  def buildPlan(triage: Triage, matched: MatchResult, unreadableReceipts: List[ReceiptRef]): Plan =
+  def buildPlan(
+      triage: Triage,
+      matched: MatchResult,
+      unreadableReceipts: List[ReceiptRef],
+      ruleAttachments: Map[ExternalRef, ReceiptRef] = Map.empty
+  ): Plan =
+    // A rule's fixed attachment wins over an OCR-paired receipt for the same candidate.
     val attachByCandidate = matched.paired.collect {
       case Pairing(receipt, MatchTarget.Candidate(candidate)) => candidate.externalRef -> receipt.ref
-    }.toMap
+    }.toMap ++ ruleAttachments
     val creates = triage.toCreate.map: candidate =>
       PlanItem(
         PlanAction.CreateExpense(candidate.externalRef, candidate, attachByCandidate.get(candidate.externalRef)),

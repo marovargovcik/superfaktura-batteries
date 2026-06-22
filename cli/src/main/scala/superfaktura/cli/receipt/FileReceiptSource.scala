@@ -32,3 +32,6 @@ object FileReceiptSource:
         .to(ByteVector)
         .map(ReceiptBytes(_))
         .adaptError { case error: IOException => CliError.FileAccess(error.getMessage) }
+
+    override def exists(ref: ReceiptRef): F[Boolean] =
+      Files.forAsync[F].exists(FsPath(ref.path))

@@ -8,3 +8,4 @@ enum CliError(message: String) extends Exception(message):
   case Api(status: Int, body: String) extends CliError(s"API error $status: $body")
   case Decode(detail: String) extends CliError(s"Unexpected Superfaktura response: $detail")
   case PlanInvalid(detail: String) extends CliError(s"Invalid plan: $detail")
+  case RulesInvalid(detail: String) extends CliError(s"Invalid rules: $detail")
