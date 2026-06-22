@@ -148,6 +148,18 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
         refOf(rent) -> ReceiptRef("/invoices/rent.pdf")
       )
     }
+
+    "applies both the rename and the attachment when a single rule sets both" in {
+      val rent =
+        tx(direction = TransactionType.Debit, amount = "450.00", recipientInfo = Some("LANDLORD"), description = "x")
+      val rules = RuleSet(List(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent {date}"), Some("/invoices/rent.pdf"))))
+
+      val candidate = ExpensePlanner.toCandidates(List(rent), rules).head
+      candidate.name shouldBe "Rent 19.06.2026"
+      ExpensePlanner.ruleAttachments(List(rent), rules) shouldBe Map(
+        candidate.externalRef -> ReceiptRef("/invoices/rent.pdf")
+      )
+    }
   }
 
   "triage" - {
@@ -199,6 +211,30 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
       val result = ExpensePlanner.triage(candidates, existing)
       result.toCreate should have size 1
       result.duplicates shouldBe empty
+    }
+
+    "keeps the rule-renamed name on a candidate that turns out to be a duplicate" in {
+      val rules = RuleSet(List(Rule(RuleMatch.ExactName("LANDLORD"), Some("Rent"), None)))
+      val candidates = ExpensePlanner.toCandidates(
+        List(tx(
+          direction = TransactionType.Debit,
+          amount = "450.00",
+          recipientInfo = Some("LANDLORD"),
+          description = "x"
+        )),
+        rules
+      )
+      val existing = List(
+        Expense(
+          id = ExpenseId(3),
+          name = "anything",
+          amount = Money(BigDecimal("450.00"), "EUR"),
+          created = date,
+          comment = Some(ExpensePlanner.refMarker(candidates.head.externalRef))
+        )
+      )
+
+      ExpensePlanner.triage(candidates, existing).duplicates.map(_.candidate.name) shouldBe List("Rent")
     }
   }
 

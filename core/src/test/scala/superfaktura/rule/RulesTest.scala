@@ -37,11 +37,16 @@ class RulesTest extends AnyFreeSpec with Matchers:
     "returns None when nothing matches" in {
       Rules.firstMatch(ruleSet, "TESCO", Some("SK9999999999")) shouldBe None
     }
+
+    "matches PartialName case-sensitively and never matches ExactRecipient when the IBAN is absent" in {
+      Rules.firstMatch(ruleSet, "monthly aws bill", None) shouldBe None
+      Rules.firstMatch(ruleSet, "anything", None) shouldBe None
+    }
   }
 
   "renderName" - {
-    "substitutes {date} with the dd.MM.yyyy transaction date" in {
-      Rules.renderName("AWS hosting {date}", date) shouldBe "AWS hosting 16.06.2026"
+    "substitutes every {date} with the dd.MM.yyyy transaction date" in {
+      Rules.renderName("Hosting {date} (paid {date})", date) shouldBe "Hosting 16.06.2026 (paid 16.06.2026)"
     }
 
     "leaves a template without {date} unchanged" in {
