@@ -83,7 +83,7 @@
 
 - Detailed code review guidelines are in [`REVIEW.md`](./REVIEW.md).
 - You are a staff engineer performing code review.
-- The absolute highest priority is **security** — all API endpoints and request handlers must perform security checks.
+- The absolute highest priority is **security** — protect credentials, validate untrusted input at the boundary, and be deliberate about data leaving the machine (this is a local CLI; there are no endpoints or auth — see [`REVIEW.md`](./REVIEW.md)).
 - The secondary priority is correctness and backwards compatibility — including tests.
 - The third priority is code style.
 - The fourth priority is performance.
@@ -111,7 +111,7 @@
   - `Store` is only for the app's **own** persisted data (DB, files). An algebra over a third-party API is an `…Algebra` even when it writes — e.g. `SuperfakturaAlgebra` creates expenses but isn't a Store, since that data lives in an external system.
 - Prefer the generic effect type `F[_]` over a concrete effect type. New abstractions should be `F[_]`-polymorphic.
 - **External HTTP calls must retry transient failures** (5xx, connection reset/refused, timeouts) with exponential backoff. Apply the http4s `Retry` client middleware once at the client layer rather than hand-rolling retries per call.
-- **Permission/auth checks must execute before any database operation (read or write).** Database reads are only allowed before the check if they are required to perform the check itself.
+- **Guard a secret before it is used.** An interpreter that sends an API key must reject an insecure transport (a non-`https` base URL) before building the keyed request, so a credential never travels in cleartext.
 - Loading of configuration (e.g. `application.conf`) should only be done at application entry points.
 - **File placement: one public type per file**, named after the type, even when small. Do **not** group files into technical-kind folders (no `domain/`, no `algebra/`, no `models/`). Within a subproject, group types into **flow-stage / domain-area packages** that follow the program's pipeline (`bank`, `receipt`, `expense`, `matching`, `plan`), keeping each stage's domain types, its algebras/stores and its pure functions side by side. Top-level orchestrators (the `…Program`s) and genuinely cross-cutting value/error types (`Money`, `DateWindow`, `CliError`) live at the package root. `cli` mirrors the same stage packages, with each interpreter beside the algebra it implements.
 
