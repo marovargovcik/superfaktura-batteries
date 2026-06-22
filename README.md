@@ -14,6 +14,10 @@ Turn a bank statement into correctly-recorded expenses, with receipts attached â
 
 The two capabilities compose or run independently (expenses only, or receipts-only against existing expenses).
 
+Optionally, a **rules file** (`--rules`) rewrites expense names and attaches fixed files automatically: each rule
+matches a transaction by exact/partial name or recipient IBAN and can rename it (with a `{date}` placeholder) and/or
+attach a specific file. See [`docs/pdr.md`](docs/pdr.md#name-rewrite--fixed-attachment-rules).
+
 ## Architecture
 
 Scala 3 + cats-effect, functional-core / imperative-shell, tagless final:
@@ -30,7 +34,7 @@ Full design, conventions and API details: [`docs/pdr.md`](docs/pdr.md).
 ## Requirements
 
 - JDK 21+
-- [sbt](https://www.scala-sbt.org/) (launcher; the build pins sbt 2.0 via `project/build.properties`)
+- [sbt](https://www.scala-sbt.org/) (launcher; the build pins sbt 1.12.x via `project/build.properties`)
 
 ## Configuration
 
@@ -57,6 +61,9 @@ Locally, put them in a git-ignored `.envrc` (loaded by [direnv](https://direnv.n
 ```bash
 # Analyse inputs and write a plan (makes no changes):
 sbt 'cli/run plan --csv statement.csv --receipts ./receipts'
+
+# Apply name-rewrite / fixed-attachment rules while planning:
+sbt 'cli/run plan --csv statement.csv --rules rules.json'
 
 # Execute a reviewed plan:
 sbt 'cli/run apply --plan plan.json'
