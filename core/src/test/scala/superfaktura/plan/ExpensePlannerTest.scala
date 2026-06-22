@@ -131,6 +131,25 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
     }
   }
 
+  "ruleAttachments" - {
+    "maps a debit's external ref to the rule's fixed attachment path, ignoring non-attaching rules" in {
+      val rent =
+        tx(direction = TransactionType.Debit, amount = "450.00", recipientInfo = Some("LANDLORD"), description = "x")
+      val tesco =
+        tx(direction = TransactionType.Debit, amount = "12.00", recipientInfo = Some("TESCO"), description = "y")
+      val rules = RuleSet(
+        List(
+          Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")),
+          Rule(RuleMatch.ExactName("TESCO"), Some("Groceries"), None)
+        )
+      )
+
+      ExpensePlanner.ruleAttachments(List(rent, tesco), rules) shouldBe Map(
+        refOf(rent) -> ReceiptRef("/invoices/rent.pdf")
+      )
+    }
+  }
+
   "triage" - {
     "splits candidates into ref-matched duplicates and fresh creates, preserving order" in {
       val card = tx(
@@ -255,6 +274,27 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
           PlanItemStatus.Skipped
         )
       )
+    }
+
+    "lets a rule attachment override an OCR-paired receipt for the same candidate" in {
+      val fresh = CandidateExpense(ExternalRef("r1"), "Rent", Money(BigDecimal("450.00"), "EUR"), date)
+      val ocrPaired = Receipt(ReceiptRef("scanned.jpg"), Money(BigDecimal("450.00"), "EUR"), date)
+      val matched = MatchResult(
+        paired = List(Pairing(ocrPaired, MatchTarget.Candidate(fresh))),
+        ambiguousReceipts = Nil,
+        contestedTargets = Nil,
+        unmatchedReceipts = Nil,
+        unmatchedTargets = Nil
+      )
+
+      val plan = ExpensePlanner.buildPlan(
+        Triage(List(fresh), Nil),
+        matched,
+        Nil,
+        Map(ExternalRef("r1") -> ReceiptRef("/invoices/rent.pdf"))
+      )
+      plan.items.collect { case PlanItem(PlanAction.CreateExpense(_, _, attach), _) => attach } shouldBe
+        List(Some(ReceiptRef("/invoices/rent.pdf")))
     }
 
     "flags ambiguous and contested receipts, deduping a ref that overlaps buckets" in {

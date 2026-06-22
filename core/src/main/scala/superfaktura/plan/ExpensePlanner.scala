@@ -30,6 +30,16 @@ object ExpensePlanner:
       case Some(template) => Rules.renderName(template, transaction.date)
       case None => default
 
+  def ruleAttachments(transactions: List[Transaction], rules: RuleSet): Map[ExternalRef, ReceiptRef] =
+    transactions
+      .filter(_.direction == TransactionType.Debit)
+      .flatMap: transaction =>
+        Rules
+          .firstMatch(rules, expenseName(transaction), transaction.counterpartyIban)
+          .flatMap(_.attach)
+          .map(path => externalRef(transaction) -> ReceiptRef(path))
+      .toMap
+
   def triage(candidates: List[CandidateExpense], existing: List[Expense]): Triage =
     val (duplicates, toCreate) = candidates.partitionMap: candidate =>
       existing.find(matchesRef(candidate, _)) match
@@ -39,10 +49,16 @@ object ExpensePlanner:
 
   def buildPlan(triage: Triage): Plan = buildPlan(triage, MatchResult.empty, Nil)
 
-  def buildPlan(triage: Triage, matched: MatchResult, unreadableReceipts: List[ReceiptRef]): Plan =
+  def buildPlan(
+      triage: Triage,
+      matched: MatchResult,
+      unreadableReceipts: List[ReceiptRef],
+      ruleAttachments: Map[ExternalRef, ReceiptRef] = Map.empty
+  ): Plan =
+    // A rule's fixed attachment wins over an OCR-paired receipt for the same candidate.
     val attachByCandidate = matched.paired.collect {
       case Pairing(receipt, MatchTarget.Candidate(candidate)) => candidate.externalRef -> receipt.ref
-    }.toMap
+    }.toMap ++ ruleAttachments
     val creates = triage.toCreate.map: candidate =>
       PlanItem(
         PlanAction.CreateExpense(candidate.externalRef, candidate, attachByCandidate.get(candidate.externalRef)),

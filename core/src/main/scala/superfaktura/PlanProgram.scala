@@ -4,7 +4,7 @@ import java.nio.file.Path
 
 import cats.MonadThrow
 import cats.syntax.all.*
-import superfaktura.bank.{BankStatementSourceAlgebra, CandidateExpense}
+import superfaktura.bank.{BankStatementSourceAlgebra, CandidateExpense, ExternalRef}
 import superfaktura.expense.{Expense, SuperfakturaAlgebra}
 import superfaktura.matching.{MatchTarget, MatchWindow, ReceiptMatcher}
 import superfaktura.plan.{ExpensePlanner, Plan, PlanStore}
@@ -34,10 +34,11 @@ object PlanProgram:
       rules <- ruleStore.load
       transactions <- bank.read(csv)
       candidates = ExpensePlanner.toCandidates(transactions, rules)
+      ruleAttachments = ExpensePlanner.ruleAttachments(transactions, rules)
       scanned <- receipts.traverse(readReceipts).map(_.getOrElse((Nil, Nil)))
       (receiptPairs, unreadable) = scanned
       existing <- listExisting(candidates, receiptPairs.map { case (_, receipt) => receipt })
-      plan = assemble(candidates, existing, receiptPairs, unreadable)
+      plan = assemble(candidates, existing, receiptPairs, unreadable, ruleAttachments)
       _ <- store.save(plan)
       _ <- reporter.summary(plan)
     yield ()
@@ -54,13 +55,14 @@ object PlanProgram:
       candidates: List[CandidateExpense],
       existing: List[Expense],
       receiptPairs: List[(ReceiptMarker, Receipt)],
-      unreadable: List[ReceiptRef]
+      unreadable: List[ReceiptRef],
+      ruleAttachments: Map[ExternalRef, ReceiptRef]
   ): Plan =
     val triage = ExpensePlanner.triage(candidates, existing)
     val targets = triage.toCreate.map(MatchTarget.Candidate(_)) ++ existing.map(MatchTarget.Existing(_))
     val (alreadyUploaded, fresh) = ExpensePlanner.partitionUploaded(receiptPairs, existing)
     val matched = ReceiptMatcher.matchReceipts(fresh, targets, MatchWindow.default)
-    val base = ExpensePlanner.buildPlan(triage, matched, unreadable)
+    val base = ExpensePlanner.buildPlan(triage, matched, unreadable, ruleAttachments)
     Plan(base.items ++ alreadyUploaded)
 
   private def readReceipts[F[_]: MonadThrow](folder: Path)(using

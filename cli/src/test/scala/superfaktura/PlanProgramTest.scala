@@ -257,5 +257,23 @@ class PlanProgramTest extends AnyFreeSpec with Matchers:
         case PlanItem(PlanAction.CreateExpense(_, candidate, _), _) => candidate.name
       } shouldBe List("Rent 16.06.2026", "UHRADA POISTNEHO")
     }
+
+    "attaches a rule's fixed file to the new expense it matches, without scanning receipts" in {
+      val rent = debit("450.00", Some("LANDLORD"), "Platba 8180")
+      val saved = Ref.unsafe[IO, Option[Plan]](None)
+
+      given BankStatementSourceAlgebra[IO] = bankReturning(List(rent))
+      given SuperfakturaAlgebra[IO] = lists(Nil)
+      given ReceiptSourceAlgebra[IO] = new ReceiptSourceAlgebraStub[IO] {}
+      given OcrAlgebra[IO] = new OcrAlgebraStub[IO] {}
+      given PlanStore[IO] = savedBy(saved)
+      given RuleStore[IO] = rulesOf(Rule(RuleMatch.ExactName("LANDLORD"), None, Some("/invoices/rent.pdf")))
+
+      PlanProgram.run[IO](csvPath, None).unsafeRunSync()
+
+      saved.get.unsafeRunSync().getOrElse(fail("plan was not saved")).items.collect {
+        case PlanItem(PlanAction.CreateExpense(_, candidate, attach), _) => candidate.name -> attach
+      } shouldBe List("LANDLORD" -> Some(ReceiptRef("/invoices/rent.pdf")))
+    }
   }
 end PlanProgramTest
