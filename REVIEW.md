@@ -4,10 +4,16 @@ The primary purpose of code review is to ensure the overall health of the codeba
 
 Approve a pull request when it definitely improves the overall health of the codebase, even if it isn't perfect. For new code, it must not lower the overall health of the codebase. Seek continuous improvement, not perfection.
 
+> [!NOTE]
+> This project is a **local, single-user command-line tool** — there is no server, database, authentication, or
+> request handler. Review guidance is framed accordingly: the security surface is secrets, untrusted inputs, the
+> filesystem, and data that leaves the machine; the performance surface is external HTTP/OCR calls and I/O, not
+> queries or migrations.
+
 ## Priority order
 
-1. **Security** — the highest priority. All API endpoints and request handlers must perform security checks.
-2. **Correctness and backwards compatibility** — including adequate test coverage.
+1. **Security** — the highest priority. For this tool that means protecting credentials, validating untrusted inputs at the boundary, and being deliberate about data that leaves the machine. Trace the code path — don't just check that a guard exists.
+2. **Correctness and backwards compatibility** — including adequate test coverage. The tool mutates a real accounting system, so idempotency and re-run safety matter as much as a single correct run.
 3. **Code style** — only flag violations of documented style guides, not personal preferences.
 4. **Performance**
 
@@ -15,22 +21,16 @@ Approve a pull request when it definitely improves the overall health of the cod
 
 ### Security
 
-All API endpoints and request handlers must perform security checks. Trace the code path — don't just check that a security import exists.
+There are no endpoints or request handlers to authenticate. The real risks are credential leakage, trusting unvalidated input, and unexpected filesystem or network egress. Trace the actual code path; don't assume.
 
 Check for:
 
-- **Authentication**: is the user properly authenticated?
-- **Authorization**: are permissions checked before data access?
-- **Input validation**: is user input sanitized?
-- **Data exposure**: could sensitive data leak through responses?
-- **Privilege escalation**: could a user access data they shouldn't?
-- **Injection risks**: SQL injection, command injection, XSS.
-
-#### Scala
-
-- Security checks belong in the **business-logic layer**, not the data-access layer.
-- When a request handler calls a data-access method directly, ensure the security check is performed at the handler level.
-- Extract security checks into named methods to avoid re-declaring them and to make testing easier.
+- **Secret handling**: the API keys (SuperFaktura, Anthropic) come from the environment only, are wrapped in `Secret` (redacted in `toString`/logs), and are unwrapped only into the request header that needs them. They must never be logged, written into the plan file, or committed — the committed `application.conf` holds only defaults and `${?ENV}` references, never a real value.
+- **Transport**: outbound API base URLs must be `https`, rejected before any keyed request is built, so a key never travels in cleartext.
+- **Boundary input validation**: untrusted inputs — the bank CSV, the SuperFaktura/Anthropic API responses, the hand-edited plan file, the rules file — are decoded into trusted domain types at the edge (Circe, the CSV parser, pureconfig) and failures surface as a typed `CliError`. The pure core trusts its inputs and does not re-validate. Flag input that reaches the core without passing a boundary parser.
+- **Filesystem & path handling**: paths the user supplies (`--csv`, `--receipts`, a rule's `attach` path) are read directly. For this single-user tool the user controls their own inputs, so this is mostly about avoiding surprises — but call out anything that would be a real trust-boundary crossing if a rules or plan file were ever shared or fetched from elsewhere.
+- **Data egress**: receipts are sent to the Anthropic API for OCR and the matched file is uploaded to SuperFaktura. Any new code that sends local data to a third party must be intentional and worth a line in the docs.
+- **Injection**: there is no SQL and no shell-out. API request bodies are built with Circe (`Json.obj` / `:=`), never string concatenation, so values are escaped — flag any hand-assembled request string or URL built by concatenating unescaped input.
 
 ### Easy to understand
 
@@ -58,6 +58,7 @@ Check for:
 - Tests that would break for the wrong reasons (testing implementation details).
 - Missing edge case coverage for critical paths.
 - **Time-sensitive flakiness**: tests using dates/times should use hard-coded values or `TemporalAdjusters` to avoid flaking on weekends, month boundaries, leap days, or out-of-office hours.
+- **No mocking libraries**: effectful dependencies are exercised with the project's `*Stub` constant interpreters, not mocks.
 - **For bug fixes**: is there a test that would have caught the bug?
 
 Explore beyond the diff — check if test files exist for changed code, read existing tests to understand coverage gaps.
@@ -74,29 +75,25 @@ Check for:
 
 #### Scala
 
-- Use of trait + companion object pattern for effectful components, with a generic `F[_]` type parameter.
-- Effectful components should take their dependencies via `using` parameter clauses (`given` instances), not on individual methods.
-- Use generic effect type `F[_]`, not a concrete effect.
-- Security checks belong in the business-logic layer, not the data-access layer.
-- API/request handlers should delegate to business-logic components for non-trivial logic.
-- Data-access components should be simple data access, not contain business logic.
+- Effectful dependencies use the **trait + companion-object interpreter** pattern with a generic `F[_]` type parameter; the live interpreter is a `given`.
+- Dependencies are passed via `using` parameter clauses (`given` instances), not on individual methods.
+- Use the generic effect type `F[_]`; the concrete effect (`IO`) appears only at the entry point.
+- Respect the layering (see `CLAUDE.md`): an **Algebra** wraps a side-effecting external dependency, a **Store** persists the app's own data, and a **Program** is effect-polymorphic business logic. Programs compose algebras/stores (and other programs); algebras/stores never call programs.
+- Introduce an Algebra/Store only when you'd plausibly swap the implementation (e.g. for tests) or it touches a stateful resource; otherwise a plain pure function or a Program is enough.
+- Keep the pure core free of `F[_]` and side effects — parsing, dedup, matching, and plan-building are total functions over immutable data.
 
 ### Performance
 
+This is a batch CLI processing one statement per run (tens to low-hundreds of transactions); raw CPU is rarely the concern. The dominant costs are external API/OCR calls and file I/O.
+
 Check for:
 
-- **N+1 query patterns**: `.map` followed by a DB call, loading entities in a loop.
-- **Inefficient queries**: missing indexes, full table scans, unnecessary JOINs.
-- **Missing pagination**: queries that could return unbounded results.
-- **Unnecessary data loading**: loading full entities when only IDs or specific fields are needed.
-- **Migrations**: should be backward-compatible and ideally a single statement per file.
-
-Specific patterns to flag:
-
-- `.map` or `.traverse` calling a data-access method (likely N+1).
-- Missing `LIMIT` on queries that could grow unboundedly.
-- New columns without considering index impact.
-- Loading related entities eagerly when they may not be needed.
+- **External HTTP**: SuperFaktura and Anthropic calls are the slow, rate-limited, paid part. Transient failures should be retried with exponential backoff via the http4s `Retry` middleware applied once at the client layer — and only idempotent requests (the GET listing) may be retried; create/edit POSTs must never be, to avoid double-booking.
+- **Per-item network/OCR calls in a loop**: flag a `.map`/`.traverse` that issues an API or OCR call per element where the work could be windowed or batched (e.g. existing expenses are fetched once over a date window, not once per transaction).
+- **Unbounded results**: a paginated API listing must follow pagination to completion, not assume a single page. In-memory collections are fine at this scale, but flag anything that could grow without bound.
+- **Repeated I/O / OCR**: don't read or OCR the same file twice; OCR is slow and billed, so its results/markers shouldn't be recomputed needlessly.
+- **Large blobs**: images are downscaled to the API's size cap before upload — flag code that loads or holds large attachment bytes longer than needed.
+- **Parallelism**: the apply step traverses sequentially for safety; bounded parallelism (`parTraverseN`) is a deliberate choice, not a default — flag unbounded `parTraverse` over external calls.
 
 ### Style
 
