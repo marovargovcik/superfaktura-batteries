@@ -223,10 +223,6 @@ Two independent mechanisms, combined:
   (`date + amount + currency + VS + SS + counterparty + description`) is stamped into the expense `comment` as
   `sfref:<hash>`. A later `plan` lists existing expenses in the CSV date window and recognises "this exact transaction
   was already booked by this tool" with certainty (`SkipDuplicate`).
-- **Fuzzy duplicate detection (planned, not implemented).** Matching API-side expenses on amount + date + fuzzy name
-  would also catch expenses entered by other means (e.g. manually in the web app). Deferred — today only the
-  external-ref mechanism runs.
-
 Duplicates are **reported and skipped by default**; the plan shows *why* each was judged a duplicate so the user can
 override (un-skip) in the plan file.
 
@@ -472,7 +468,6 @@ enum PlanAction:
   case AttachToExisting(expenseId: ExpenseId, attachment: ReceiptRef)
   case SkipDuplicate(ref: ExternalRef, reason: String, matched: ExpenseId)
   case FlagReceipt(receipt: ReceiptRef, reason: String)         // unmatched / ambiguous / unreadable
-  case NeedsResolution(ref: ExternalRef, candidates: List[ExpenseId], reason: String) // reserved
 
 object ExpensePlanner:
   def toCandidates(transactions: List[Transaction], config: MappingConfig): List[CandidateExpense]     = ???
