@@ -378,22 +378,17 @@ class ExpensePlannerTest extends AnyFreeSpec with Matchers:
           PlanItem(PlanAction.AttachToExisting(ExpenseId(42), ReceiptRef("/x.pdf"), None), PlanItemStatus.Applied),
           PlanItem(PlanAction.SkipDuplicate(ExternalRef("d"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
           PlanItem(PlanAction.RenameExpense(ExpenseId(8), "Rent 16.06.2026"), PlanItemStatus.Pending),
-          PlanItem(
-            PlanAction.NeedsResolution(ExternalRef("n"), List(ExpenseId(1), ExpenseId(2)), "ambiguous"),
-            PlanItemStatus.Pending
-          ),
           PlanItem(PlanAction.FlagReceipt(ReceiptRef("/y.png"), "no match"), PlanItemStatus.Skipped),
           PlanItem(PlanAction.ReceiptAlreadyUploaded(ReceiptRef("/z.pdf"), ExpenseId(99)), PlanItemStatus.Skipped)
         )
       )
 
       val rendered = ExpensePlanner.render(plan)
-      rendered should include("Plan: 7 item(s)")
+      rendered should include("Plan: 6 item(s)")
       rendered should include("create 'SHELL 8203' 73.71 EUR")
       rendered should include("attach /x.pdf to expense 42")
       rendered should include("skip duplicate of expense 7: already booked")
       rendered should include("rename expense 8 to 'Rent 16.06.2026'")
-      rendered should include("needs resolution (ambiguous); candidates: 1, 2")
       rendered should include("flag receipt /y.png: no match")
       rendered should include("skip /z.pdf: already uploaded to expense 99")
     }

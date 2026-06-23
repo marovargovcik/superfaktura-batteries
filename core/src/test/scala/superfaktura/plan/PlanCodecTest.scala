@@ -35,10 +35,6 @@ class PlanCodecTest extends AnyFreeSpec with Matchers:
       PlanItem(PlanAction.SkipDuplicate(ExternalRef("def456"), "already booked", ExpenseId(7)), PlanItemStatus.Skipped),
       PlanItem(PlanAction.RenameExpense(ExpenseId(8), "Rent 16.06.2026"), PlanItemStatus.Pending),
       PlanItem(
-        PlanAction.NeedsResolution(ExternalRef("ghi789"), List(ExpenseId(1), ExpenseId(2)), "ambiguous amount"),
-        PlanItemStatus.Pending
-      ),
-      PlanItem(
         PlanAction.ReceiptAlreadyUploaded(ReceiptRef("/receipts/orange.jpg"), ExpenseId(20)),
         PlanItemStatus.Skipped
       )

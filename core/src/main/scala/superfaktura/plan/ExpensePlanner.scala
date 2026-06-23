@@ -170,8 +170,6 @@ object ExpensePlanner:
         s"[$status] skip duplicate of expense ${matched.value}: $reason"
       case PlanAction.RenameExpense(expenseId, name) =>
         s"[$status] rename expense ${expenseId.value} to '$name'"
-      case PlanAction.NeedsResolution(_, candidates, reason) =>
-        s"[$status] needs resolution ($reason); candidates: ${candidates.map(_.value).mkString(", ")}"
       case PlanAction.FlagReceipt(receipt, reason) =>
         s"[$status] flag receipt ${receipt.path}: $reason"
       case PlanAction.ReceiptAlreadyUploaded(receipt, expense) =>
